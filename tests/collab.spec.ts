@@ -149,7 +149,7 @@ test('API status page shows local retry after first-load API failure', async ({ 
   expect(user.page.url()).toBe(urlAfterFailure)
 })
 
-test('an outsider socket never receives a sealed scorecard phrase', async ({ users }) => {
+test('sealed scorecards stay off the socket and out of pre-reveal HTTP responses', async ({ users }) => {
   test.setTimeout(120_000)
   test.skip(
     usableTestAccounts < 3,
@@ -225,12 +225,16 @@ test('an outsider socket never receives a sealed scorecard phrase', async ({ use
   const denied = await postAction(interviewer.page, 'deleteCandidate', { candidateId })
   expect(denied.status).toBe(403)
   expect(denied.text).not.toContain(sentinel)
-  for (const actor of [outsider.page, interviewer.page]) {
-    for (const name of ['roomShell', 'forceReveal'] as const) {
-      const body = await postAction(actor, name, { candidateId })
-      expect(body.text, name).not.toContain(sentinel)
-      expect(body.text, name).not.toContain('Needs a clearer rollout plan.')
-    }
+  for (const name of ['roomShell', 'forceReveal'] as const) {
+    const outsiderBody = await postAction(outsider.page, name, { candidateId })
+    expect(outsiderBody.status, `outsider ${name}`).toBe(404)
+    expect(outsiderBody.text, `outsider ${name}`).not.toContain(sentinel)
+    expect(outsiderBody.text, `outsider ${name}`).not.toContain('Needs a clearer rollout plan.')
+
+    const memberBody = await postAction(interviewer.page, name, { candidateId })
+    expect(memberBody.text, `panel ${name}`).not.toContain(sentinel)
+    expect(memberBody.text, `panel ${name}`).not.toContain('Needs a clearer rollout plan.')
+    if (name === 'forceReveal') expect(memberBody.text).toContain('reveal_not_allowed')
   }
 
   await hm.page.getByTestId('force-reveal').click()
@@ -320,4 +324,73 @@ test('two last submissions leave one snapshot with both cards', async ({ users }
   const parsed = JSON.parse(shell.text) as { data?: { cards?: Array<{ strengths: string }> } }
   const strengths = (parsed.data?.cards ?? []).map((entry) => entry.strengths).sort()
   expect(strengths).toEqual(['Interviewer note.', 'Manager note.'])
+})
+
+test('deny, rotate, leave, and remove stay off the panel, and the funnel is owner-only', async ({ users }) => {
+  test.setTimeout(90_000)
+  const [hm, interviewer] = await users(2)
+  const candidateName = `__test-${Date.now()}__`
+  await hm.page.goto('/dashboard')
+  await hm.page.getByTestId('new-candidate').click()
+  await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(candidateName)
+  await hm.page.getByLabel('Role').fill('Backend engineer')
+  await hm.page.getByLabel('Panel size').fill('2')
+  await hm.page.getByRole('button', { name: 'Open room' }).click()
+  await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
+  const candidateId = new URL(hm.page.url()).pathname.split('/').pop() ?? ''
+  const invite = await hm.page.getByTestId('invite-link').inputValue()
+  const inviteCode = new URL(invite).searchParams.get('code') ?? ''
+
+  await interviewer.page.goto(invite)
+  await interviewer.page.getByLabel('Name on the panel').fill('Interviewer')
+  await interviewer.page.getByTestId('join-panel').click()
+  await expect(interviewer.page.getByTestId('join-waiting')).toBeVisible()
+
+  const waiting = await postAction(hm.page, 'roomShell', { candidateId })
+  const waitingBody = JSON.parse(waiting.text) as {
+    data?: { pending?: Array<{ userId: string }>; roster?: Array<{ userId: string }> }
+  }
+  const memberId = waitingBody.data?.pending?.[0]?.userId ?? ''
+  expect(memberId).not.toBe('')
+  expect(waitingBody.data?.roster ?? []).toEqual([])
+
+  const denied = await postAction(hm.page, 'denyJoin', { candidateId, userId: memberId })
+  expect(denied.status).toBe(200)
+  expect(JSON.parse(denied.text)).toMatchObject({ success: true, data: { denied: true } })
+  const hidden = await postAction(interviewer.page, 'roomShell', { candidateId })
+  expect(hidden.status).toBe(404)
+
+  const again = await postAction(interviewer.page, 'joinPanel', { candidateId, inviteCode, displayName: 'Interviewer' })
+  expect(JSON.parse(again.text)).toMatchObject({ success: true, data: { pending: true } })
+  const approved = await postAction(hm.page, 'approveJoin', { candidateId, userId: memberId })
+  expect(approved.status).toBe(200)
+  expect(JSON.parse(approved.text)).toMatchObject({ success: true, data: { approved: true } })
+  const inside = await postAction(interviewer.page, 'roomShell', { candidateId })
+  expect(inside.status).toBe(200)
+
+  const rotated = await postAction(hm.page, 'rotateInvite', { candidateId })
+  expect(rotated.status).toBe(200)
+  const nextCode = (JSON.parse(rotated.text) as { data?: { inviteCode?: string } }).data?.inviteCode ?? ''
+  expect(nextCode).not.toBe(inviteCode)
+  const stale = await postAction(interviewer.page, 'joinPanel', { candidateId, inviteCode, displayName: 'Interviewer' })
+  expect(stale.text).toContain('bad_code')
+
+  const left = await postAction(interviewer.page, 'leaveRoom', { candidateId })
+  expect(left.status).toBe(200)
+  expect(JSON.parse(left.text)).toMatchObject({ success: true, data: { left: true } })
+  const afterLeave = await postAction(interviewer.page, 'roomShell', { candidateId })
+  expect(afterLeave.status).toBe(404)
+
+  const rejoined = await postAction(interviewer.page, 'joinPanel', { candidateId, inviteCode: nextCode, displayName: 'Interviewer' })
+  expect(JSON.parse(rejoined.text)).toMatchObject({ success: true, data: { pending: true } })
+  const reapproved = await postAction(hm.page, 'approveJoin', { candidateId, userId: memberId })
+  expect(reapproved.status).toBe(200)
+  const removed = await postAction(hm.page, 'removeMember', { candidateId, userId: memberId })
+  expect(removed.status).toBe(200)
+  expect(JSON.parse(removed.text)).toMatchObject({ success: true, data: { removed: true } })
+  const afterRemove = await postAction(interviewer.page, 'roomShell', { candidateId })
+  expect(afterRemove.status).toBe(404)
+
+  const funnel = await postAction(interviewer.page, 'funnelReport', {})
+  expect(funnel.status).toBe(403)
 })

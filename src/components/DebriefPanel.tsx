@@ -61,12 +61,12 @@ export function DebriefPanel({
       {status === 'failed' ? (
         <div className="mt-4 space-y-4">
           <p className="text-sm text-destructive">AI summary unavailable</p>
-          {canRetry && attempts < 3 ? (
+          {canRetry && attempts < 5 ? (
             <Button variant="outline" onClick={onGenerate} disabled={busy} loading={busy}>
               Retry
             </Button>
           ) : null}
-          {canRetry && attempts >= 3 ? <p className="text-sm text-muted-foreground">Retries are used up.</p> : null}
+          {canRetry && attempts >= 5 ? <p className="text-sm text-muted-foreground">Retries are used up.</p> : null}
         </div>
       ) : null}
 

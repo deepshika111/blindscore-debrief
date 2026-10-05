@@ -40,5 +40,9 @@ describe('computeStats', () => {
     expect(discussFirst([card(4, 2, 3), card(2, 4, 3), card(3, 3, 4)])).toEqual(['technical', 'systemDesign'])
     expect(discussFirst([card(4, 1, 3), card(2, 4, 3)])).toEqual(['systemDesign', 'technical'])
     expect(discussFirst([card(3, 3, 3), card(4, 3, 3)])).toEqual([])
+    expect(discussFirst(
+      [{ scores: { problem: 4, execution: 1, stakeholders: 3 } }, { scores: { problem: 2, execution: 4, stakeholders: 3 } }],
+      ['problem', 'execution', 'stakeholders'],
+    )).toEqual(['execution', 'problem'])
   })
 })

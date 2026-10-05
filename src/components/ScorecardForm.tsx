@@ -1,21 +1,24 @@
 import { useState } from 'react'
 import { callAction, explainActionError } from '@/lib/action'
+import { RUBRICS, type Metric } from '@/lib/rubrics'
 import { RECS, REC_LABEL, SCORE_WORD, type Recommendation } from '@/types'
 import { Button, ConfirmModal, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, useToast } from './ui'
 
-const FIELDS = [
-  { id: 'technical', label: 'Technical' },
-  { id: 'systemDesign', label: 'System design' },
-  { id: 'communication', label: 'Communication' },
-] as const
-
 const SCALE = [1, 2, 3, 4] as const
 
-type FieldId = (typeof FIELDS)[number]['id'] | 'recommendation' | 'strengths' | 'concerns'
+type FieldId = string
 
-export function ScorecardForm({ candidateId, onSubmitted }: { candidateId: string; onSubmitted?: () => void }) {
+export function ScorecardForm({
+  candidateId,
+  metrics = RUBRICS.swe.metrics,
+  onSubmitted,
+}: {
+  candidateId: string
+  metrics?: readonly Metric[]
+  onSubmitted?: () => void
+}) {
   const { error: toastError } = useToast()
-  const [scores, setScores] = useState<Partial<Record<(typeof FIELDS)[number]['id'], number>>>({})
+  const [scores, setScores] = useState<Partial<Record<string, number>>>({})
   const [recommendation, setRecommendation] = useState<Recommendation | ''>('')
   const [strengths, setStrengths] = useState('')
   const [concerns, setConcerns] = useState('')
@@ -25,8 +28,8 @@ export function ScorecardForm({ candidateId, onSubmitted }: { candidateId: strin
 
   function gaps(): Array<{ id: FieldId; label: string }> {
     const items: Array<{ id: FieldId; label: string }> = []
-    for (const field of FIELDS) {
-      if (scores[field.id] == null) items.push({ id: field.id, label: field.label })
+    for (const field of metrics) {
+      if (scores[field.key] == null) items.push({ id: field.key, label: field.label })
     }
     if (!recommendation) items.push({ id: 'recommendation', label: 'Recommendation' })
     if (!strengths.trim()) items.push({ id: 'strengths', label: 'Strengths' })
@@ -72,34 +75,37 @@ export function ScorecardForm({ candidateId, onSubmitted }: { candidateId: strin
         setConfirm(true)
       }}
     >
-      {FIELDS.map((field) => (
-        <fieldset key={field.id} className="space-y-2">
+      {metrics.map((field) => (
+        <fieldset key={field.key} className="space-y-2">
           <legend className="text-sm font-medium">{field.label}</legend>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {SCALE.map((value) => {
-              const selected = scores[field.id] === value
+              const selected = scores[field.key] === value
               return (
                 <button
                   key={value}
                   type="button"
                   aria-pressed={selected}
                   onClick={() => {
-                    setScores((current) => ({ ...current, [field.id]: value }))
-                    clearMissing(field.id)
+                    setScores((current) => ({ ...current, [field.key]: value }))
+                    clearMissing(field.key)
                   }}
                   className={`rounded-xl border px-3 py-3 text-left ${
                     selected ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card'
                   }`}
                 >
                   <span className="font-display block text-2xl leading-none">{value}</span>
-                  <span className={`mt-1 block text-xs ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
+                  <span className={`mt-1 block text-xs ${selected ? 'text-primary-foreground' : 'text-muted-foreground'}`}>
                     {SCORE_WORD[value]}
+                  </span>
+                  <span className={`mt-1 block text-xs ${selected ? 'text-primary-foreground' : 'text-muted-foreground'}`}>
+                    {field.anchors[value - 1]}
                   </span>
                 </button>
               )
             })}
           </div>
-          {missing.includes(field.id) ? <p className="text-sm text-destructive" role="alert">Fill in {field.label}.</p> : null}
+          {missing.includes(field.key) ? <p className="text-sm text-destructive" role="alert">Fill in {field.label}.</p> : null}
         </fieldset>
       ))}
 

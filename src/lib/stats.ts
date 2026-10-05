@@ -1,3 +1,5 @@
+import { RUBRICS } from './rubrics'
+
 export const DIMS = ['technical', 'systemDesign', 'communication'] as const
 
 export type Dim = (typeof DIMS)[number]
@@ -15,8 +17,8 @@ export interface DimStat {
 }
 
 /** Pure. The model is never asked to do this arithmetic. */
-export function computeStats(cards: StatCard[]): DimStat[] {
-  return DIMS.map((dim) => {
+export function computeStats(cards: StatCard[], keys: readonly string[] = DIMS): DimStat[] {
+  return keys.map((dim) => {
     const vals = cards.map((card) => card.scores[dim] ?? 0)
     const spread = cards.length === 0 ? 0 : Math.max(...vals) - Math.min(...vals)
     const mean = cards.length === 0 ? 0 : vals.reduce((sum, value) => sum + value, 0) / vals.length
@@ -28,22 +30,21 @@ export function computeStats(cards: StatCard[]): DimStat[] {
 /** Metrics whose scores differ by 2 or more, widest split first. */
 export function discussFirst(
   cards: Array<{ scores: Record<string, number> | { technical: number; systemDesign: number; communication: number } }>,
-): Dim[] {
-  return DIMS.map((dim) => {
+  keys: readonly string[] = DIMS,
+): string[] {
+  return keys.map((dim) => {
     const vals = cards.map((card) => (card.scores as Record<string, number>)[dim] ?? 0)
     const spread = vals.length === 0 ? 0 : Math.max(...vals) - Math.min(...vals)
     return { dim, spread }
   })
     .filter((row) => row.spread >= 2)
-    .sort((a, b) => b.spread - a.spread || DIMS.indexOf(a.dim) - DIMS.indexOf(b.dim))
+    .sort((a, b) => b.spread - a.spread || keys.indexOf(a.dim) - keys.indexOf(b.dim))
     .map((row) => row.dim)
 }
 
-export const DIM_LABEL: Record<Dim, string> = {
-  technical: 'Technical',
-  systemDesign: 'System design',
-  communication: 'Communication',
-}
+export const DIM_LABEL: Record<string, string> = Object.fromEntries(
+  RUBRICS.swe.metrics.map((metric) => [metric.key, metric.label]),
+)
 
 export interface PanelVote {
   verdict: 'Yes' | 'No' | 'Split'

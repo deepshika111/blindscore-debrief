@@ -444,6 +444,22 @@ test('a claimed invite cannot be reused, and the token is not in later reads', a
   expect(after.status).toBe(403)
 })
 
+test('a PM template room shows PM metrics on the scorecard', async ({ users }) => {
+  test.setTimeout(60_000)
+  const [hm] = await users(1)
+  await hm.page.goto('/dashboard')
+  await hm.page.getByTestId('new-candidate').click()
+  await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(`__test-${Date.now()}__`)
+  await hm.page.getByLabel('Role').fill('Product manager')
+  await hm.page.getByLabel('Template').selectOption('pm')
+  await hm.page.getByLabel('Panelist 1').fill('Interviewer')
+  await hm.page.getByRole('button', { name: 'Open room' }).click()
+  await expect(hm.page.getByRole('group', { name: 'Problem framing' })).toBeVisible({ timeout: 20_000 })
+  await expect(hm.page.getByRole('group', { name: 'Execution' })).toBeVisible()
+  await expect(hm.page.getByRole('group', { name: 'Stakeholders' })).toBeVisible()
+  await expect(hm.page.getByRole('group', { name: 'Technical' })).toHaveCount(0)
+})
+
 test('a saved person refills the next room and can be removed', async ({ users }) => {
   test.setTimeout(90_000)
   const [hm] = await users(1)

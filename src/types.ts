@@ -48,7 +48,7 @@ export interface SubmissionData {
 export interface RevealCard {
   interviewerId: string
   name: string
-  scores: DimensionScores
+  scores: Record<string, number>
   recommendation: Recommendation
   strengths: string
   concerns: string

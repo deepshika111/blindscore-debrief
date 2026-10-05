@@ -253,6 +253,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
           />
           <DebriefPanel
             debrief={debrief}
+            cards={shownCards}
             cardCount={shownCards.length}
             busy={debriefBusy}
             onGenerate={() => void generateDebrief()}

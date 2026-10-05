@@ -325,6 +325,13 @@ export const actions: Record<string, ActionHandler<Env>> = {
     return { success: true, data: { candidateId: created.data.recordId, inviteCode } }
   },
 
+  inviteNotice: async ({ params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    if (typeof params.inviteCode !== 'string' || params.inviteCode !== cand.inviteCode) return fail('bad_code')
+    return { success: true, data: { name: cand.name, role: cand.role } }
+  },
+
   roomShell: async ({ userId, params, tools }) => {
     const cand = await loadCandidate(tools, params.candidateId)
     if (!cand) return fail('not_found')
@@ -422,6 +429,33 @@ export const actions: Record<string, ActionHandler<Env>> = {
       if (!opened.success) return opened
     }
     return { success: true, data: { submitted: true } }
+  },
+
+  submissionNotices: async ({ userId, tools }) => {
+    const candidates = await tools.query('candidates', { limit: 50 })
+    if (!candidates.success) return candidates
+    const submissions = await tools.query('submissions', { limit: 100 })
+    if (!submissions.success) return submissions
+    const managed = new Map<string, { name: string; panelNames: Record<string, string> }>()
+    for (const row of candidates.data.records) {
+      if (row.data.hiringManagerId !== userId) continue
+      const name = typeof row.data.name === 'string' ? row.data.name : 'Candidate'
+      managed.set(row.recordId, { name, panelNames: namesOf(row.data.panelNames) })
+    }
+    const notices: Array<{ id: string; candidateId: string; candidateName: string; name: string }> = []
+    for (const row of submissions.data.records) {
+      const candidateId = typeof row.data.candidateId === 'string' ? row.data.candidateId : ''
+      const interviewerId = typeof row.data.interviewerId === 'string' ? row.data.interviewerId : ''
+      const cand = managed.get(candidateId)
+      if (!cand || !interviewerId) continue
+      notices.push({
+        id: row.recordId,
+        candidateId,
+        candidateName: cand.name,
+        name: cand.panelNames[interviewerId] || 'An interviewer',
+      })
+    }
+    return { success: true, data: { notices } }
   },
 
   allowForceReveal: async ({ userId, params, tools }) => {

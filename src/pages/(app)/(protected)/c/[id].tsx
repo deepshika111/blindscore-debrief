@@ -65,7 +65,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const debriefState = debrief?.status ?? ''
 
   useEffect(() => {
-    if (!revealed || debriefState === 'ready' || debriefState === 'pending') return
+    if (!revealed || debriefState === 'ready' || debriefState === 'pending' || debriefState === 'failed') return
     if (!revealId && shell?.status !== 'revealed') return
     let cancelled = false
     setDebriefBusy(true)
@@ -235,9 +235,6 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
               </Button>
             </div>
             <p className="break-all text-xs text-muted-foreground">{invite}</p>
-            <p className="text-xs text-muted-foreground">
-              Safari calls this link unsafe because it is your own computer. On that screen, click visit this website.
-            </p>
           </div>
         ) : null}
       </header>
@@ -289,7 +286,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
         <div className="mt-6 flex flex-wrap items-center gap-3">
           {isManager && !shell?.forceRevealAllowed ? (
             <Button variant="outline" disabled={revealing} onClick={() => void allowForceReveal()}>
-              Allow force reveal
+              Allow force reveal to panel members
             </Button>
           ) : null}
           <Button

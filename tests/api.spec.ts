@@ -7,7 +7,7 @@ test.describe('API tests', () => {
   })
 
   test('scorecard actions reject a missing bearer token', async ({ request }) => {
-    for (const name of ['createCandidate', 'joinPanel', 'submitScorecard', 'forceReveal', 'allowForceReveal', 'generateDebrief', 'roomShell', 'deleteCandidate']) {
+    for (const name of ['createCandidate', 'inviteNotice', 'joinPanel', 'submitScorecard', 'submissionNotices', 'forceReveal', 'allowForceReveal', 'generateDebrief', 'roomShell', 'deleteCandidate']) {
       const res = await request.post(`/api/actions/${name}`, { data: {} })
       expect(res.status(), name).toBe(401)
     }

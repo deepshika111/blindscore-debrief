@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useAuthUser } from 'deepspace'
 import { callAction, explainActionError } from '@/lib/action'
@@ -9,11 +9,15 @@ export default function JoinPage() {
   const [params] = useSearchParams()
   const code = params.get('code') ?? ''
   const { user } = useAuthUser()
-  const { error: toastError } = useToast()
+  const { error: toastError, info } = useToast()
   const [displayName, setDisplayName] = useState('')
   const [seeded, setSeeded] = useState(false)
   const [joining, setJoining] = useState(false)
   const [closed, setClosed] = useState(false)
+  const [invite, setInvite] = useState<{ name: string; role: string } | null>(null)
+  const told = useRef('')
+  const infoRef = useRef(info)
+  infoRef.current = info
 
   useEffect(() => {
     if (seeded) return
@@ -22,6 +26,26 @@ export default function JoinPage() {
     setDisplayName(full)
     setSeeded(true)
   }, [seeded, user])
+
+  useEffect(() => {
+    if (!id || !code) return
+    const key = `${id}?${code}`
+    if (told.current === key) return
+    told.current = key
+    let cancelled = false
+    void callAction<{ name: string; role: string }>('inviteNotice', { candidateId: id, inviteCode: code })
+      .then((data) => {
+        if (cancelled) return
+        setInvite(data)
+        infoRef.current(`${data.name} is ready`, `You're invited to score this ${data.role}.`)
+      })
+      .catch(() => {
+        if (!cancelled) told.current = ''
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [id, code])
 
   async function join() {
     setJoining(true)
@@ -50,6 +74,11 @@ export default function JoinPage() {
       <p className="mt-3 text-sm text-muted-foreground">
         Enter the name this room should show for you. Open the same invite again to change it. One scorecard, then it locks.
       </p>
+      {invite ? (
+        <p className="mt-4 rounded-xl border border-border bg-card px-4 py-3 text-sm" role="status">
+          You're invited to score {invite.name} for {invite.role}.
+        </p>
+      ) : null}
       <label className="mt-8 block text-xs text-muted-foreground" htmlFor="panel-name">
         Name on the panel
       </label>

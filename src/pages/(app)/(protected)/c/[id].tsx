@@ -6,6 +6,7 @@ import { RevealGrid } from '@/components/RevealGrid'
 import { ScorecardForm } from '@/components/ScorecardForm'
 import { Badge, Button, ConfirmModal, useToast } from '@/components/ui'
 import { callAction, explainActionError } from '@/lib/action'
+import { debriefIcs } from '@/lib/calendar'
 import { inviteMessage, mailtoHref } from '@/lib/invites'
 import type { CandidateData, DebriefData, RevealCard, RevealData, ScorecardData, SubmissionData } from '@/types'
 
@@ -31,6 +32,9 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const [savedLinks, setSavedLinks] = useState<SavedLink[]>([])
   const [emailed, setEmailed] = useState<string[]>([])
   const [canShare, setCanShare] = useState(false)
+  const [meetingAt, setMeetingAt] = useState('')
+  const [meetingMinutes, setMeetingMinutes] = useState('30')
+  const [meetingBusy, setMeetingBusy] = useState(false)
   const [shellReady, setShellReady] = useState(false)
   const shellTicket = useRef(0)
 
@@ -331,6 +335,44 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
     }
   }
 
+  async function saveMeeting() {
+    const when = new Date(meetingAt)
+    if (Number.isNaN(when.getTime())) {
+      toastError('Could not save the meeting', 'Enter a date and a duration between 15 and 180 minutes.')
+      return
+    }
+    setMeetingBusy(true)
+    try {
+      await callAction('setMeeting', { candidateId, meetingAt: when.toISOString(), meetingMinutes: Number(meetingMinutes) })
+      await refreshShell()
+      success('Debrief time saved')
+    } catch (error) {
+      toastError('Could not save the meeting', explainActionError(error))
+    } finally {
+      setMeetingBusy(false)
+    }
+  }
+
+  function downloadCalendar(at: string, minutes: number, sequence: number) {
+    const roomUrl = `${window.location.origin}/c/${candidateId}`
+    const file = debriefIcs({
+      candidateId,
+      candidate: room.name,
+      role: room.role,
+      meetingAt: at,
+      meetingMinutes: minutes,
+      sequence,
+      roomUrl,
+    })
+    const blob = new Blob([file], { type: 'text/calendar' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `debrief-${candidateId}.ics`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
   async function rotateInvite() {
     setMemberBusy('rotate')
     try {
@@ -457,6 +499,52 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
           </div>
         ) : null}
       </header>
+
+      {shell?.meetingAt || (isManager && !revealed) ? (
+        <section className="mt-6 rounded-xl border border-border px-4 py-3">
+          <h2 className="text-sm font-medium">Debrief meeting</h2>
+          {isManager && !revealed ? (
+            <div className="mt-3 flex flex-wrap items-end gap-2">
+              <label className="block space-y-1 text-xs text-muted-foreground">
+                When
+                <input
+                  data-testid="meeting-at"
+                  type="datetime-local"
+                  value={meetingAt}
+                  onChange={(event) => setMeetingAt(event.target.value)}
+                  className="block h-10 rounded-lg border border-border bg-card px-3 text-sm text-foreground"
+                />
+              </label>
+              <label className="block space-y-1 text-xs text-muted-foreground">
+                Minutes
+                <input
+                  data-testid="meeting-minutes"
+                  type="number"
+                  min={15}
+                  max={180}
+                  value={meetingMinutes}
+                  onChange={(event) => setMeetingMinutes(event.target.value)}
+                  className="block h-10 w-24 rounded-lg border border-border bg-card px-3 text-sm text-foreground"
+                />
+              </label>
+              <Button type="button" disabled={meetingBusy} onClick={() => void saveMeeting()}>Save time</Button>
+            </div>
+          ) : null}
+          {shell?.meetingAt ? (
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+              <p className="text-muted-foreground">{new Date(shell.meetingAt).toLocaleString()} · {shell.meetingMinutes} min</p>
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="add-calendar"
+                onClick={() => downloadCalendar(shell.meetingAt ?? '', shell.meetingMinutes ?? 30, shell.meetingSequence ?? 0)}
+              >
+                Add to calendar
+              </Button>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {isManager && (shell?.pending?.length ?? 0) > 0 ? (
         <ul className="mt-6 space-y-2">
@@ -619,6 +707,9 @@ interface RoomShell {
   pending?: Array<{ userId: string; name: string }>
   roster?: Array<{ userId: string; name: string; submitted: boolean }>
   allowOpenLink?: boolean
+  meetingAt?: string
+  meetingMinutes?: number
+  meetingSequence?: number
   invites?: Array<{ id: string; label: string; email: string; status: string; name: string }>
   cards?: RevealCard[]
   missing?: string[]

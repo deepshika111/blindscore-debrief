@@ -64,6 +64,9 @@ interface CandidateRow {
   pendingNames: Record<string, string>
   isDemo: boolean
   allowOpenLink: boolean
+  meetingAt: string
+  meetingMinutes: number
+  meetingSequence: number
 }
 
 function strings(value: unknown): string[] {
@@ -116,6 +119,9 @@ function readCandidate(record: { recordId: string; updatedAt: string; data: Reco
     pendingNames: namesOf(data.pendingNames),
     isDemo: data.isDemo === true || data.isDemo === 1,
     allowOpenLink: data.allowOpenLink === 'yes',
+    meetingAt: typeof data.meetingAt === 'string' ? data.meetingAt : '',
+    meetingMinutes: typeof data.meetingMinutes === 'number' ? data.meetingMinutes : 0,
+    meetingSequence: typeof data.meetingSequence === 'number' ? data.meetingSequence : 0,
   }
 }
 
@@ -666,6 +672,9 @@ export const actions: Record<string, ActionHandler<Env>> = {
       submittedNames,
       mine: records.some((row) => row.data.interviewerId === userId),
       panelNames: cand.panelNames,
+      meetingAt: cand.meetingAt,
+      meetingMinutes: cand.meetingMinutes,
+      meetingSequence: cand.meetingSequence,
       revealRequestNames: cand.revealRequests.map((id) => cand.panelNames[id] || 'An interviewer'),
       ...(isManager && inviteRows && inviteRows.success
         ? {
@@ -805,6 +814,29 @@ export const actions: Record<string, ActionHandler<Env>> = {
     const removed = await tools.remove('contacts', contactId)
     if (!removed.success) return removed
     return { success: true, data: { removed: true } }
+  },
+
+  setMeeting: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    if (cand.status !== 'scoring') return fail('already_revealed')
+    const meetingAt = typeof params.meetingAt === 'string' ? params.meetingAt : ''
+    const meetingMinutes = params.meetingMinutes
+    const when = Date.parse(meetingAt)
+    if (!Number.isFinite(when) || typeof meetingMinutes !== 'number' || !Number.isInteger(meetingMinutes) || meetingMinutes < 15 || meetingMinutes > 180) {
+      return fail('bad_meeting')
+    }
+    const changed = cand.meetingAt !== new Date(when).toISOString() || cand.meetingMinutes !== meetingMinutes
+    const meetingSequence = cand.meetingAt ? cand.meetingSequence + (changed ? 1 : 0) : 0
+    const saved = await tools.update('candidates', cand.recordId, {
+      meetingAt: new Date(when).toISOString(),
+      meetingMinutes,
+      meetingSequence,
+    })
+    if (!saved.success) return saved
+    return { success: true, data: { meetingAt: new Date(when).toISOString(), meetingMinutes, meetingSequence } }
   },
 
   addInvite: async ({ userId, params, tools }) => {

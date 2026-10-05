@@ -85,6 +85,11 @@ test('API status page renders loading success and error states', async ({ users 
   let shouldFail = false
   let requestCount = 0
 
+  let releaseCatalog = () => {}
+  const catalogReady = new Promise<void>((resolve) => {
+    releaseCatalog = resolve
+  })
+
   await user.page.route('**/api/integrations', async (route) => {
     requestCount += 1
     if (shouldFail) {
@@ -96,7 +101,7 @@ test('API status page renders loading success and error states', async ({ users 
       return
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await catalogReady
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -106,6 +111,7 @@ test('API status page renders loading success and error states', async ({ users 
 
   await user.page.goto('/api-status')
   await expect(user.page.getByText('Loading integration catalog...')).toBeVisible()
+  releaseCatalog()
   await expect(user.page.getByText('Integration catalog ready')).toBeVisible()
   await expect(user.page.getByText('2 integrations available.')).toBeVisible()
 
@@ -292,7 +298,7 @@ test('sample debrief opens on the split without a second account', async ({ user
     await hm.page.getByRole('button', { name: 'Save decision' }).click()
   }
   await expect(hm.page.getByTestId('decision')).toContainText('Hold', { timeout: 20_000 })
-  await hm.page.getByRole('button', { name: 'Copy plain text' }).click()
+  await hm.page.getByRole('button', { name: 'Copy debrief' }).click()
   await expect(hm.page.getByTestId('export-text')).toHaveValue(/Sample candidate/)
   await expect(hm.page.getByTestId('export-text')).toHaveValue(/Discuss first/)
   await expect(hm.page.getByTestId('export-text')).toHaveValue(/Hold/)
@@ -460,20 +466,19 @@ test('a claimed invite cannot be reused, and the token is not in later reads', a
   expect(after.status).toBe(403)
 })
 
-test('a PM template room shows PM metrics on the scorecard', async ({ users }) => {
+test('a new room uses the one scorecard and can set a due date', async ({ users }) => {
   test.setTimeout(60_000)
   const [hm] = await users(1)
   await hm.page.goto('/dashboard')
   await hm.page.getByTestId('new-candidate').click()
+  await expect(hm.page.getByLabel('Template')).toHaveCount(0)
   await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(`__test-${Date.now()}__`)
   await hm.page.getByLabel('Role').fill('Product manager')
-  await hm.page.getByLabel('Template').selectOption('pm')
   await hm.page.getByLabel('Panelist 1').fill('Interviewer')
   await hm.page.getByRole('button', { name: 'Open room' }).click()
-  await expect(hm.page.getByRole('group', { name: 'Problem framing' })).toBeVisible({ timeout: 20_000 })
-  await expect(hm.page.getByRole('group', { name: 'Execution' })).toBeVisible()
-  await expect(hm.page.getByRole('group', { name: 'Stakeholders' })).toBeVisible()
-  await expect(hm.page.getByRole('group', { name: 'Technical' })).toHaveCount(0)
+  await expect(hm.page.getByRole('group', { name: 'Technical' })).toBeVisible({ timeout: 20_000 })
+  await expect(hm.page.getByRole('group', { name: 'System design' })).toBeVisible()
+  await expect(hm.page.getByRole('group', { name: 'Communication' })).toBeVisible()
   await hm.page.getByTestId('due-at').fill('2026-10-06T18:00')
   await hm.page.getByRole('button', { name: 'Save due date' }).click()
   await expect(hm.page.getByTestId('due-label')).toContainText('Scores due', { timeout: 20_000 })
@@ -496,9 +501,8 @@ test('a saved person refills the next room and can be removed', async ({ users }
   await hm.page.getByLabel('Email').fill('jordan@example.com')
   await hm.page.getByRole('button', { name: 'Open room' }).click()
   await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
-  await expect(hm.page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 20_000 })
-  await hm.page.getByRole('button', { name: 'Send' }).click()
-  await expect(hm.page.getByText('Email is not set up on this app yet.')).toBeVisible({ timeout: 20_000 })
+  await expect(hm.page.getByTestId('invite-email')).toBeVisible({ timeout: 20_000 })
+  await expect(hm.page.getByRole('button', { name: 'Send' })).toHaveCount(0)
   const candidateId = new URL(hm.page.url()).pathname.split('/').pop() ?? ''
   await hm.page.getByTestId('meeting-at').fill('2026-10-06T15:30')
   await hm.page.getByTestId('meeting-minutes').fill('45')

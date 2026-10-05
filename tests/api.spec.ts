@@ -7,9 +7,22 @@ test.describe('API tests', () => {
   })
 
   test('scorecard actions reject a missing bearer token', async ({ request }) => {
-    for (const name of ['createCandidate', 'inviteNotice', 'joinPanel', 'approveJoin', 'denyJoin', 'rotateInvite', 'removeMember', 'leaveRoom', 'submitScorecard', 'submissionNotices', 'requestForceReveal', 'forceReveal', 'allowForceReveal', 'generateDebrief', 'markDebriefViewed', 'funnelReport', 'createDemoRoom', 'roomShell', 'deleteCandidate', 'addInvite', 'revokeInvite', 'resendInvite', 'removeContact', 'setMeeting', 'setDue', 'nudge', 'sendInvites', 'recordDecision', 'roomActivity', 'myCalibration']) {
+    for (const name of ['createCandidate', 'inviteNotice', 'joinPanel', 'approveJoin', 'denyJoin', 'rotateInvite', 'removeMember', 'leaveRoom', 'submitScorecard', 'submissionNotices', 'requestForceReveal', 'forceReveal', 'allowForceReveal', 'generateDebrief', 'markDebriefViewed', 'funnelReport', 'createDemoRoom', 'roomShell', 'deleteCandidate', 'addInvite', 'revokeInvite', 'replaceInvite', 'removeContact', 'setMeeting', 'setDue', 'nudge', 'recordDecision', 'roomActivity', 'myCalibration']) {
       const res = await request.post(`/api/actions/${name}`, { data: {} })
       expect(res.status(), name).toBe(401)
+    }
+  })
+
+  test('html pages send a content security policy', async ({ request }) => {
+    for (const path of ['/', '/dashboard']) {
+      const response = await request.get(path)
+      const csp = response.headers()['content-security-policy'] ?? ''
+      expect(csp, path).toContain("default-src 'self'")
+      expect(csp, path).toContain("font-src 'self'")
+      expect(csp, path).toContain("object-src 'none'")
+      expect(csp, path).toContain("base-uri 'self'")
+      expect(csp, path).not.toContain('fonts.googleapis.com')
+      expect(csp, path).not.toContain('fonts.gstatic.com')
     }
   })
 

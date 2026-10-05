@@ -10,8 +10,6 @@ const COPY: Record<string, string> = {
   bad_email: 'Enter a valid email, or leave it blank.',
   bad_meeting: 'Enter a date and a duration between 15 and 180 minutes.',
   nudge_done: 'That person already submitted.',
-  email_unconfigured: 'Email is not set up on this app yet.',
-  email_failed: 'The email did not send.',
   decision_locked: 'This decision is already saved.',
   bad_decision: 'Pick hire, no hire, or hold, and keep the reason under 280 characters.',
   panel_full: 'This panel is already full.',

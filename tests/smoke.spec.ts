@@ -20,10 +20,21 @@ async function waitForApp(page: import('@playwright/test').Page) {
 test.describe('Smoke tests', () => {
   test('static landing loads without JS errors', async ({ page }) => {
     const errors = captureConsoleErrors(page)
+    const thirdPartyFonts: string[] = []
+    page.on('request', (request) => {
+      const url = request.url()
+      if (url.includes('fonts.googleapis.com') || url.includes('fonts.gstatic.com')) thirdPartyFonts.push(url)
+    })
     await page.goto('/')
     await waitForApp(page)
     await expect(page.getByTestId('static-landing')).toBeVisible()
+    const fontsReady = await page.evaluate(async () => {
+      await document.fonts.ready
+      return document.fonts.check('600 48px Fraunces') && document.fonts.check('400 16px Outfit')
+    })
+    expect(fontsReady).toBe(true)
     expect(errors).toEqual([])
+    expect(thirdPartyFonts).toEqual([])
   })
 
   test('landing carries one title, one description, one canonical', async ({ page }) => {

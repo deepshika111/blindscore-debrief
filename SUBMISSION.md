@@ -19,7 +19,7 @@ In hiring debriefs, whoever speaks first anchors everyone else. BlindScore is an
 - One stored debrief is shared by the panel. `computeStats` does the arithmetic; the model is told not to recommend hire or no-hire, and its JSON is parsed with zod. If that call throws, the same row is rewritten with `status: 'failed'` and the stats are kept.
 - The hiring manager can force reveal as soon as one scorecard is in. Other panel members cannot, until the manager clicks “Allow force reveal to panel members”. Allowing it does not reveal the room.
 - Overall yes/no comes from recommendations. Each metric is a circle: the center is the number of submitted scorecards, and the ring is the largest group that shared one score against everyone else.
-- Cut from the first version: resumes and multi-org. Email, a calendar file, role rubrics, a decision log, and export came later. Each is a server action or a file built from data the action already returned.
+- Cut from the first version: resumes and multi-org. Email, a calendar file, a decision log, and a plain-text export came later. Each is a server action or a file built from data the action already returned.
 
 ## 4. How I directed AI coding tools
 
@@ -48,6 +48,8 @@ Checked on 4 Oct 2026 against a local `deepspace` dev server. Playwright used a 
 ## Invites, before and after
 
 The first invite was one shared link. The hiring manager approved or denied each person who opened it. The current invite is one token per person. The server stores a hash. A second account that opens a claimed, revoked, or expired link gets 403. The shared link still exists only when the manager turns on “Allow open link.”
+
+Invites are sent with each person's own mailto: link. Sending from the app is not built; it would need a verified sending domain.
 
 The Activation page still counts invite opened, claimed, joined, first scorecard, reveal, and debrief viewed. This experiment has not been run. There are no conversion numbers yet.
 

@@ -17,6 +17,9 @@ export default defineConfig({
   testMatch: '**/*.spec.ts',
   timeout: 30_000,
   retries: 0,
+  // The signed-in fixtures reuse one account pool. Parallel workers navigate
+  // those same sessions and tear down a page.evaluate that is still running.
+  workers: 1,
   use: {
     baseURL: BASE_URL,
     headless: true,

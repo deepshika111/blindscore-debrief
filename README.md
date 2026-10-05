@@ -16,7 +16,7 @@ This checkout is a working DeepSpace app. The template release is the local tag 
 4. `npx tsc --noEmit` and `npm run test:unit`
 5. From `tests/`, `DEEPSPACE_PORT=<a free port>` `npx playwright test`. Port 5173 is the dev server. The Playwright config starts its own Vite on `DEEPSPACE_PORT`.
 
-`generateDebrief` is the only model call. A daily cron deletes rooms past the retention window. There is no job queue and no assistant route. Do not put `RESEND_API_KEY` or `RESEND_FROM` in the repo. Set them with `npx deepspace secrets set` when you want outbound email. Until both exist, each invite still has its own `mailto:` link.
+`generateDebrief` is the only model call. A daily cron deletes rooms past the retention window. There is no job queue and no assistant route. Invites are sent with each person's own mailto: link. Sending from the app is not built; it would need a verified sending domain.
 
 ## Security model
 
@@ -44,4 +44,4 @@ This checkout is a working DeepSpace app. The template release is the local tag 
 
 - The two reveal writes are not one database transaction. A crash between them is repaired on the next `roomShell`.
 - Rate limits are per isolate of one Durable Object. A burst that arrives as two requests can still interleave only at the action boundary; the counter itself is one request.
-- Outbound email sends only when `RESEND_API_KEY` and `RESEND_FROM` are Worker secrets. Each message contains one person's link. The calendar file, when a debrief time is set, uses the room URL.
+- Invites are sent with each person's own mailto: link. Sending from the app is not built; it would need a verified sending domain. The calendar file, when a debrief time is set, uses the room URL.

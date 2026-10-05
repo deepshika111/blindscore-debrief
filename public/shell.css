@@ -1,0 +1,3 @@
+html { background-color: #121410; color-scheme: dark; }
+html[data-theme="paper"] { background-color: #ffffff; color-scheme: light; }
+html[data-theme="slate"] { background-color: #0a0a0a; color-scheme: dark; }

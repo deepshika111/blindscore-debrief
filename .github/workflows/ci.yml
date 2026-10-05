@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Schema lint and unit tests
+        run: npm run test:unit
+
+  # Playwright stays local. The collaboration tests sign in with DeepSpace
+  # test accounts whose passwords live only on the machine that created them
+  # (~/.deepspace/test-accounts.json) and talk to auth.deep.space. A GitHub
+  # runner has neither those accounts nor a place to put the passwords, so
+  # `npx playwright test` is not a CI job.

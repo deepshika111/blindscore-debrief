@@ -1,5 +1,7 @@
 # BlindScore
 
+[![CI](https://github.com/deepshika111/blindscore/actions/workflows/ci.yml/badge.svg)](https://github.com/deepshika111/blindscore/actions/workflows/ci.yml)
+
 Interviewers score a candidate without seeing each other. The room opens when the panel is full, or when the hiring manager force-reveals.
 
 ## Security model

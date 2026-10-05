@@ -154,19 +154,4 @@ export function registerRealtimeRoutes(app: Hono<AppContext>): void {
     '/ws/presence/:scopeId',
     wsRoute((env) => env.PRESENCE_ROOMS),
   )
-
-  app.get(
-    '/ws/cron/:roomId',
-    wsRoute(
-      (env) => env.CRON_ROOMS,
-      // Authenticated users get their current app role. Anonymous connections
-      // have no role and CronRoom enforces them as read-only viewers.
-      async (auth, env) => ({ role: await resolveAppRole(env, auth.userId) }),
-    ),
-  )
-
-  app.get(
-    '/ws/jobs/:roomId',
-    wsRoute((env) => env.JOB_ROOMS),
-  )
 }

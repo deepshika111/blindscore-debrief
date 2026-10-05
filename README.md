@@ -11,15 +11,15 @@ Interviewers score a candidate without seeing each other. The room opens when th
 - Joining adds the person to a pending list. They cannot read the room or submit until the hiring manager approves them. `rotateInvite` kills the old link. `removeMember` works before reveal and only if that person has not submitted.
 - Sign-in does not give the action a verified email, so invites are not locked to an address.
 - Before reveal, `roomShell` returns names, who submitted, flags, and the caller's own card. Other scores and notes are not included. After reveal, the snapshot is returned only to panel members.
-- A scorecard submitted after a reveals row exists gets 409 and is not stored.
-- `records.create` updates an existing id. The reveal row carries an immutable seal, so a second writer reads the first snapshot and does not replace it. Setting the candidate status is a second write. If that write is missed, `roomShell` repairs it from the reveals row.
+- A scorecard submitted after a reveals row exists gets 409 and is not stored. If a reveal lands after the card write, the action deletes that card and its submission so a stored card cannot sit outside the snapshot.
+- `records.create` updates an existing id. The reveal row carries an immutable seal, so a second writer reads the first snapshot and does not replace it. Setting the candidate status is a second write. If that write is missed, `roomShell` sets status to `revealed` before it returns.
 
 ## Limits
 
 - Names 60 characters, roles 80, strengths and concerns 1,000.
 - New join requests: 10 per minute per person, counted in the record Durable Object.
 - New rooms: 20 per hour per person.
-- Debrief generation: 3 per room per hour, and 3 attempts total. Only the hiring manager can press Retry.
+- Debrief generation: 5 attempts for the life of a room, and at most 3 of those per hour. Only the hiring manager can press Retry. A finished debrief does not call the model again.
 - One sample room per user. It does not call the model.
 
 ## Still open

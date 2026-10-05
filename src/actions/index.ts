@@ -24,7 +24,7 @@ const fail = (error: string): ActionResult<never> => ({ success: false, error })
 const nameText = z.string().trim().min(1).max(60)
 const roleText = z.string().trim().min(1).max(80)
 const noteText = z.string().trim().min(1).max(1000)
-const DEBRIEF_ATTEMPTS = 3
+const DEBRIEF_ATTEMPTS = 5
 const FUNNEL = ['room_created', 'invite_opened', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened'] as const
 type FunnelEvent = (typeof FUNNEL)[number]
 
@@ -283,6 +283,25 @@ function withoutId(names: Record<string, string>, userId: string): Record<string
   const next = { ...names }
   delete next[userId]
   return next
+}
+
+async function discardScore(tools: Tools, cardId: string, submissionId: string | null): Promise<ActionResult<unknown>> {
+  const card = await tools.remove('scorecards', cardId)
+  if (!card.success && !card.error.toLowerCase().includes('not found')) return card
+  if (!submissionId) return { success: true, data: {} }
+  const submission = await tools.remove('submissions', submissionId)
+  if (!submission.success && !submission.error.toLowerCase().includes('not found')) return submission
+  return { success: true, data: {} }
+}
+
+function snapshotIncludes(data: unknown, userId: string): boolean {
+  if (!data || typeof data !== 'object') return false
+  const cards = (data as { cards?: unknown }).cards
+  if (!Array.isArray(cards)) return false
+  return cards.some((card) => {
+    if (!card || typeof card !== 'object') return false
+    return (card as { interviewerId?: unknown }).interviewerId === userId
+  })
 }
 
 async function dropMember(tools: Tools, cand: CandidateRow, memberId: string, eraseCards: boolean): Promise<ActionResult<unknown>> {
@@ -683,13 +702,26 @@ export const actions: Record<string, ActionHandler<Env>> = {
       panel: cand.panel,
     }))
     if (!submission.success && !submission.error.startsWith('Duplicate')) return submission
+    const submissionId = submission.success ? submission.data.recordId : null
 
     const subs = await tools.query('submissions', { where: { candidateId: cand.recordId }, limit: 20 })
-    if (subs.success) await logEvent(tools, cand, 'scorecard_submitted', userId)
+    const late = await tools.get('reveals', cand.recordId)
+    if (late.success) {
+      const pulled = await discardScore(tools, card.data.recordId, submissionId)
+      if (!pulled.success) return pulled
+      await repairRevealed(tools, cand)
+      return fail('already_revealed')
+    }
     if (subs.success && subs.data.count >= cand.expectedPanelSize) {
       const opened = await revealRoom(tools, cand, userId, 'auto')
       if (!opened.success) return opened
+      if (!snapshotIncludes(opened.data, userId)) {
+        const pulled = await discardScore(tools, card.data.recordId, submissionId)
+        if (!pulled.success) return pulled
+        return fail('already_revealed')
+      }
     }
+    if (subs.success) await logEvent(tools, cand, 'scorecard_submitted', userId)
     return { success: true, data: { submitted: true } }
   },
 

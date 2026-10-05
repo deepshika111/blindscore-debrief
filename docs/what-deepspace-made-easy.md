@@ -26,6 +26,8 @@ Document that action tools skip per-record RBAC, next to `getAuthToken`, not onl
 
 ## One experiment
 
+This experiment has not been run. There are no conversion numbers yet.
+
 Post the same "Try a sample debrief" link in two developer communities on the same day, with different headlines. A: "Score a candidate without seeing the other interviewers." B: "A hiring debrief you can open in five seconds." Send each post to `/?h=a` or `/?h=b`, and log that parameter on the sample open and on the next real room that account creates.
 
 Decision, decided before looking at the numbers. Fifty visits per headline. If one headline's sample-to-own-room rate is at least double the other and at least 10%, use that headline and run it once more. If both are under 5%, stop the posts and change the sample, not the headline. If they are within 20% of each other, the headline is not the lever; stop and change the first screen instead.

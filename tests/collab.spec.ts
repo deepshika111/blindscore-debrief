@@ -410,6 +410,12 @@ test('a claimed invite cannot be reused, and the token is not in later reads', a
   const invite = await hm.page.getByTestId('invite-link').inputValue()
   const token = new URL(invite).searchParams.get('t') ?? ''
   expect(token.length).toBeGreaterThan(20)
+  await expect(hm.page.getByTestId('invite-email')).toBeVisible({ timeout: 20_000 })
+  const mail = await hm.page.getByTestId('invite-email').getAttribute('href')
+  expect(mail).toContain(encodeURIComponent(`Score ${candidateName} for Backend engineer`))
+  expect(mail).toContain(token)
+  expect(mail?.split(token).length).toBe(2)
+  await expect(hm.page.getByTestId('email-next')).toBeVisible()
 
   await interviewer.page.goto(invite)
   await interviewer.page.getByLabel('Name on the panel').fill('Interviewer')

@@ -25,6 +25,18 @@ export async function hashToken(token: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
+export function inviteMessage(candidate: string, role: string, url: string): { subject: string; body: string } {
+  return {
+    subject: `Score ${candidate} for ${role}`,
+    body: `Your link is only for you. Open it to score ${candidate} for ${role}:\n${url}`,
+  }
+}
+
+export function mailtoHref(email: string, candidate: string, role: string, url: string): string {
+  const message = inviteMessage(candidate, role, url)
+  return `mailto:${encodeURIComponent(email.trim())}?subject=${encodeURIComponent(message.subject)}&body=${encodeURIComponent(message.body)}`
+}
+
 export function classifyInvite(
   row: { status: string; claimedBy: string; expiresAt: string },
   userId: string,

@@ -29,6 +29,7 @@ const noteText = z.string().trim().min(1).max(1000)
 const DEBRIEF_ATTEMPTS = 5
 const FUNNEL = ['room_created', 'invite_created', 'invite_opened', 'invite_claimed', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened'] as const
 type FunnelEvent = (typeof FUNNEL)[number]
+type EventName = FunnelEvent | 'nudge_sent'
 
 function asRecord(value: object): Record<string, unknown> {
   return value as Record<string, unknown>
@@ -68,6 +69,7 @@ interface CandidateRow {
   meetingMinutes: number
   meetingSequence: number
   rubric: Rubric
+  dueAt: string
 }
 
 function strings(value: unknown): string[] {
@@ -124,6 +126,7 @@ function readCandidate(record: { recordId: string; updatedAt: string; data: Reco
     meetingMinutes: typeof data.meetingMinutes === 'number' ? data.meetingMinutes : 0,
     meetingSequence: typeof data.meetingSequence === 'number' ? data.meetingSequence : 0,
     rubric: rubricFromRoom(data.rubric),
+    dueAt: typeof data.dueAt === 'string' ? data.dueAt : '',
   }
 }
 
@@ -257,7 +260,7 @@ async function repairRevealed(tools: Tools, cand: CandidateRow): Promise<void> {
   if (updated.success) cand.status = 'revealed'
 }
 
-async function logEvent(tools: Tools, cand: CandidateRow, name: FunnelEvent, userId: string, suffix = ''): Promise<void> {
+async function logEvent(tools: Tools, cand: CandidateRow, name: EventName, userId: string, suffix = ''): Promise<void> {
   if (cand.isDemo && name !== 'demo_opened') return
   const recordId = name === 'scorecard_submitted'
     ? `${cand.recordId}:${name}:${userId}`
@@ -674,6 +677,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
       meetingMinutes: cand.meetingMinutes,
       meetingSequence: cand.meetingSequence,
       rubric: cand.rubric,
+      dueAt: cand.dueAt,
       revealRequestNames: cand.revealRequests.map((id) => cand.panelNames[id] || 'An interviewer'),
       ...(isManager && inviteRows && inviteRows.success
         ? {
@@ -813,6 +817,41 @@ export const actions: Record<string, ActionHandler<Env>> = {
     const removed = await tools.remove('contacts', contactId)
     if (!removed.success) return removed
     return { success: true, data: { removed: true } }
+  },
+
+  setDue: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    if (cand.status !== 'scoring') return fail('already_revealed')
+    const dueAt = typeof params.dueAt === 'string' ? params.dueAt : ''
+    const when = Date.parse(dueAt)
+    if (!Number.isFinite(when)) return fail('bad_meeting')
+    const saved = await tools.update('candidates', cand.recordId, { dueAt: new Date(when).toISOString() })
+    if (!saved.success) return saved
+    return { success: true, data: { dueAt: new Date(when).toISOString() } }
+  },
+
+  nudge: async ({ userId, params, tools, env }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    if (cand.status !== 'scoring') return fail('already_revealed')
+    const inviteId = typeof params.inviteId === 'string' ? params.inviteId : ''
+    const loaded = await tools.get('invites', inviteId)
+    if (!loaded.success) return fail('not_found')
+    const invite = readInvite(loaded.data.record)
+    if (!invite || loaded.data.record.data.candidateId !== cand.recordId || invite.status === 'revoked') return fail('not_found')
+    if (invite.claimedBy) {
+      const subs = await tools.query('submissions', { where: { candidateId: cand.recordId }, limit: 20 })
+      if (!subs.success) return subs
+      if (subs.data.records.some((row) => row.data.interviewerId === invite.claimedBy)) return fail('nudge_done')
+    }
+    if (!(await chargeRate(env, `nudge:${cand.recordId}:${invite.recordId}`, 1, 6 * 60 * 60 * 1000))) return fail('rate_limited')
+    await logEvent(tools, cand, 'nudge_sent', userId, `${invite.recordId}:${Date.now()}`)
+    return { success: true, data: { email: invite.email, label: invite.label } }
   },
 
   setMeeting: async ({ userId, params, tools }) => {

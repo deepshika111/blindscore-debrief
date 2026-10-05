@@ -61,6 +61,7 @@ export const candidatesSchema: CollectionSchema = {
     { name: 'meetingMinutes', storage: 'number', interpretation: 'plain' },
     { name: 'meetingSequence', storage: 'number', interpretation: 'plain' },
     json('rubric'),
+    { name: 'dueAt', storage: 'text', interpretation: { kind: 'datetime' } },
   ],
   collaboratorsField: 'panel',
   permissions: panelOnly,
@@ -143,7 +144,7 @@ export const eventsSchema: CollectionSchema = {
       required: true,
       interpretation: {
         kind: 'select',
-        options: ['room_created', 'invite_created', 'invite_opened', 'invite_claimed', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened'],
+        options: ['room_created', 'invite_created', 'invite_opened', 'invite_claimed', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened', 'nudge_sent'],
       },
     },
     text('userId', true),

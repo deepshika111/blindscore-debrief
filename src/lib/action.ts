@@ -9,6 +9,7 @@ const COPY: Record<string, string> = {
   invite_used: 'This invite was already used or is no longer valid.',
   bad_email: 'Enter a valid email, or leave it blank.',
   bad_meeting: 'Enter a date and a duration between 15 and 180 minutes.',
+  nudge_done: 'That person already submitted.',
   panel_full: 'This panel is already full.',
   not_found: 'Room not found.',
   forbidden: 'You are not allowed to do that.',

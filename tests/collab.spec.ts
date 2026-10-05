@@ -191,7 +191,7 @@ test('sealed scorecards stay off the socket and out of pre-reveal HTTP responses
   await interviewer.page.getByTestId('join-panel').click()
   await expect(interviewer.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
   await interviewer.page.getByRole('button', { name: 'Request force reveal' }).click()
-  await expect(hm.page.getByRole('alert').filter({ hasText: 'Interviewer is requesting force reveal' })).toBeVisible({ timeout: 15_000 })
+  await expect(hm.page.getByRole('alert').filter({ hasText: candidateName }).filter({ hasText: 'requesting force reveal' })).toBeVisible({ timeout: 15_000 })
 
   for (const dimension of ['Technical', 'System design', 'Communication']) {
     await hm.page.getByRole('group', { name: dimension }).getByRole('button', { name: /Strong yes/ }).click()
@@ -458,6 +458,14 @@ test('a PM template room shows PM metrics on the scorecard', async ({ users }) =
   await expect(hm.page.getByRole('group', { name: 'Execution' })).toBeVisible()
   await expect(hm.page.getByRole('group', { name: 'Stakeholders' })).toBeVisible()
   await expect(hm.page.getByRole('group', { name: 'Technical' })).toHaveCount(0)
+  await hm.page.getByTestId('due-at').fill('2026-10-06T18:00')
+  await hm.page.getByRole('button', { name: 'Save due date' }).click()
+  await expect(hm.page.getByTestId('due-label')).toContainText('Scores due', { timeout: 20_000 })
+  await hm.page.getByRole('button', { name: 'Nudge' }).click()
+  await expect(hm.page.getByTestId('nudge-text')).toHaveValue(new RegExp(`/c/`), { timeout: 20_000 })
+  await expect(hm.page.getByTestId('nudge-text')).not.toHaveValue(/\?t=/)
+  await hm.page.getByRole('button', { name: 'Nudge' }).click()
+  await expect(hm.page.getByText('Too many requests. Wait and try again.')).toBeVisible({ timeout: 20_000 })
 })
 
 test('a saved person refills the next room and can be removed', async ({ users }) => {

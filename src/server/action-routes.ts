@@ -67,6 +67,9 @@ export function registerActionRoutes(app: Hono<AppContext>, resolveAuth: Resolve
     if (!result.success && result.error === 'not_found') {
       return c.json({ success: false, error: result.error, message: 'Room not found' }, 404)
     }
+    if (!result.success && result.error === 'decision_locked') {
+      return c.json({ success: false, error: result.error, message: 'This decision is already saved.' }, 409)
+    }
     if (!result.success && (result.error === 'already_revealed' || result.error === 'leave_blocked' || result.error === 'remove_blocked')) {
       const message = result.error === 'leave_blocked'
         ? 'You can leave only before the room is revealed, and only if you have not submitted.'

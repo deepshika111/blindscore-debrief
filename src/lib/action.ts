@@ -12,6 +12,8 @@ const COPY: Record<string, string> = {
   nudge_done: 'That person already submitted.',
   email_unconfigured: 'Email is not set up on this app yet.',
   email_failed: 'The email did not send.',
+  decision_locked: 'This decision is already saved.',
+  bad_decision: 'Pick hire, no hire, or hold, and keep the reason under 280 characters.',
   panel_full: 'This panel is already full.',
   not_found: 'Room not found.',
   forbidden: 'You are not allowed to do that.',

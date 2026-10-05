@@ -145,7 +145,7 @@ export const eventsSchema: CollectionSchema = {
       required: true,
       interpretation: {
         kind: 'select',
-        options: ['room_created', 'invite_created', 'invite_opened', 'invite_claimed', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened', 'nudge_sent'],
+        options: ['room_created', 'invite_created', 'invite_opened', 'invite_claimed', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened', 'nudge_sent', 'decision_recorded'],
       },
     },
     text('userId', true),
@@ -180,6 +180,26 @@ export const invitesSchema: CollectionSchema = {
   permissions: managerOwn,
 }
 
+export const decisionsSchema: CollectionSchema = {
+  name: 'decisions',
+  columns: [
+    text('candidateId', true),
+    {
+      name: 'decision',
+      storage: 'text',
+      required: true,
+      interpretation: { kind: 'select', options: ['hire', 'no_hire', 'hold'] },
+    },
+    text('reason', true),
+    text('decidedBy', true),
+    { name: 'decidedAt', storage: 'text', interpretation: { kind: 'datetime' }, required: true },
+    json('panel'),
+    { name: 'seal', storage: 'text', interpretation: 'plain', immutable: true },
+  ],
+  collaboratorsField: 'panel',
+  permissions: panelOnly,
+}
+
 export const contactsSchema: CollectionSchema = {
   name: 'contacts',
   columns: [
@@ -201,4 +221,5 @@ export const blindscoreSchemas = [
   eventsSchema,
   invitesSchema,
   contactsSchema,
+  decisionsSchema,
 ]

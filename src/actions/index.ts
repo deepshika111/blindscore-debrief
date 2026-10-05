@@ -51,7 +51,7 @@ const noteText = z.string().trim().min(1).max(1000)
 const DEBRIEF_ATTEMPTS = 5
 const FUNNEL = ['room_created', 'invite_created', 'invite_opened', 'invite_claimed', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened'] as const
 type FunnelEvent = (typeof FUNNEL)[number]
-type EventName = FunnelEvent | 'nudge_sent'
+type EventName = FunnelEvent | 'nudge_sent' | 'decision_recorded'
 
 function asRecord(value: object): Record<string, unknown> {
   return value as Record<string, unknown>
@@ -152,6 +152,14 @@ function readCandidate(record: { recordId: string; updatedAt: string; data: Reco
     dueAt: typeof data.dueAt === 'string' ? data.dueAt : '',
     emailsSent: typeof data.emailsSent === 'number' ? data.emailsSent : 0,
   }
+}
+
+async function readDecision(tools: Tools, candidateId: string): Promise<{ decision: string; reason: string } | null> {
+  const loaded = await tools.get('decisions', candidateId)
+  if (!loaded.success) return null
+  const data = loaded.data.record.data
+  if (typeof data.decision !== 'string' || typeof data.reason !== 'string') return null
+  return { decision: data.decision, reason: data.reason }
 }
 
 async function loadCandidate(tools: Tools, id: unknown): Promise<CandidateRow | null> {
@@ -702,6 +710,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
       meetingSequence: cand.meetingSequence,
       rubric: cand.rubric,
       dueAt: cand.dueAt,
+      decision: await readDecision(tools, cand.recordId),
       revealRequestNames: cand.revealRequests.map((id) => cand.panelNames[id] || 'An interviewer'),
       ...(isManager && inviteRows && inviteRows.success
         ? {
@@ -1294,6 +1303,35 @@ export const actions: Record<string, ActionHandler<Env>> = {
       )
       return fail('ai_failed')
     }
+  },
+
+  recordDecision: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    const revealed = await tools.get('reveals', cand.recordId)
+    if (!revealed.success) return fail('not_revealed')
+    const decision = params.decision
+    if (decision !== 'hire' && decision !== 'no_hire' && decision !== 'hold') return fail('bad_decision')
+    const reason = typeof params.reason === 'string' ? params.reason.trim() : ''
+    if (!reason || reason.length > 280) return fail('bad_decision')
+    const created = await tools.create('decisions', asRecord({
+      candidateId: cand.recordId,
+      decision,
+      reason,
+      decidedBy: userId,
+      decidedAt: new Date().toISOString(),
+      panel: cand.panel,
+      seal: crypto.randomUUID(),
+    }), cand.recordId)
+    if (!created.success) {
+      const existing = await tools.get('decisions', cand.recordId)
+      if (existing.success) return fail('decision_locked')
+      return created
+    }
+    await logEvent(tools, cand, 'decision_recorded', userId)
+    return { success: true, data: { recorded: true } }
   },
 
   markDebriefViewed: async ({ userId, params, tools }) => {

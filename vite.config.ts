@@ -7,6 +7,7 @@ import { cloudflare } from '@cloudflare/vite-plugin'
 import checker from 'vite-plugin-checker'
 import { deepspaceBuild } from 'deepspace/build'
 import { prerender } from './prerender.ts'
+import { pageSecurityHeaders } from './src/lib/security-headers.ts'
 
 const appDir = fileURLToPath(new URL('.', import.meta.url))
 const certDir = fileURLToPath(new URL('./.dev-certs', import.meta.url))
@@ -14,14 +15,17 @@ const certDir = fileURLToPath(new URL('./.dev-certs', import.meta.url))
 export default defineConfig({
   // Safari drops the sign-in cookie on http://localhost. Start with
   // `npm run dev:safari` so the dev server is https and the cookie sticks.
-  server: process.env.BLINDSCORE_HTTPS === '1'
-    ? {
-        https: {
-          cert: readFileSync(`${certDir}/localhost.pem`),
-          key: readFileSync(`${certDir}/localhost-key.pem`),
-        },
-      }
-    : undefined,
+  server: {
+    headers: pageSecurityHeaders,
+    ...(process.env.BLINDSCORE_HTTPS === '1'
+      ? {
+          https: {
+            cert: readFileSync(`${certDir}/localhost.pem`),
+            key: readFileSync(`${certDir}/localhost-key.pem`),
+          },
+        }
+      : {}),
+  },
   plugins: [
     react(),
     generouted(),

@@ -5,6 +5,8 @@
  *
  * `events` is a sixth collection used only for activation counts.
  * Members cannot read it. The owner report is an action.
+ * `auditLog` is server-written. Clients cannot read it. The hiring manager
+ * reads a room's rows through `roomActivity`.
  *
  * Anonymous sockets use the `*` role. With no entry, the DO already denies
  * them; the explicit rule makes that visible in the schema.
@@ -200,6 +202,25 @@ export const decisionsSchema: CollectionSchema = {
   permissions: panelOnly,
 }
 
+export const auditLogSchema: CollectionSchema = {
+  name: 'auditLog',
+  columns: [
+    text('candidateId', true),
+    text('actor', true),
+    {
+      name: 'action',
+      storage: 'text',
+      required: true,
+      interpretation: {
+        kind: 'select',
+        options: ['invite_created', 'invite_revoked', 'joined', 'approved', 'denied', 'force_revealed', 'auto_revealed', 'decision_recorded', 'deleted'],
+      },
+    },
+    { name: 'at', storage: 'text', interpretation: { kind: 'datetime' }, required: true },
+  ],
+  permissions: { '*': noAccess, member: noAccess, admin: noAccess },
+}
+
 export const contactsSchema: CollectionSchema = {
   name: 'contacts',
   columns: [
@@ -222,4 +243,5 @@ export const blindscoreSchemas = [
   invitesSchema,
   contactsSchema,
   decisionsSchema,
+  auditLogSchema,
 ]

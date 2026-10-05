@@ -45,6 +45,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const [decisionReason, setDecisionReason] = useState('')
   const [decisionBusy, setDecisionBusy] = useState(false)
   const [exportText, setExportText] = useState('')
+  const [activity, setActivity] = useState<Array<{ action: string; at: string }>>([])
   const [shellReady, setShellReady] = useState(false)
   const shellTicket = useRef(0)
 
@@ -728,7 +729,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
         </section>
       ) : null}
 
-      {revealed && isManager && !shell?.decision ? (
+      {revealed && isManager && shellReady && !shell?.decision ? (
         <section className="mt-6 rounded-2xl border border-border px-5 py-4">
           <h2 className="text-sm font-medium">Decision</h2>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -749,6 +750,26 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
           </label>
           <Button className="mt-3" type="button" disabled={decisionBusy} onClick={() => void saveDecision()}>Save decision</Button>
         </section>
+      ) : null}
+
+      {isManager ? (
+        <details
+          className="mt-6 rounded-2xl border border-border px-5 py-4"
+          data-testid="activity"
+          onToggle={(event) => {
+            if (!event.currentTarget.open) return
+            void callAction<{ entries: Array<{ action: string; at: string }> }>('roomActivity', { candidateId })
+              .then((result) => setActivity(result.entries))
+              .catch((error: unknown) => toastError(explainActionError(error)))
+          }}
+        >
+          <summary className="cursor-pointer text-sm font-medium">Activity</summary>
+          <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
+            {activity.map((entry, index) => (
+              <li key={`${entry.at}:${entry.action}:${index}`}>{activityLabel(entry.action)}</li>
+            ))}
+          </ul>
+        </details>
       ) : null}
 
       {revealed && gridReady ? (
@@ -864,6 +885,21 @@ interface SavedLink {
   label: string
   email: string
   url: string
+}
+
+function activityLabel(action: string): string {
+  const labels: Record<string, string> = {
+    invite_created: 'Invite created',
+    invite_revoked: 'Invite revoked',
+    joined: 'Joined',
+    approved: 'Approved',
+    denied: 'Denied',
+    force_revealed: 'Force revealed',
+    auto_revealed: 'Revealed',
+    decision_recorded: 'Decision recorded',
+    deleted: 'Deleted',
+  }
+  return labels[action] ?? action
 }
 
 function decisionLabel(value: string): string {

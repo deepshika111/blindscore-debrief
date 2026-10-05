@@ -8,7 +8,9 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import {
+  armCronRoom,
   CanvasRoom,
+  CronRoom,
   PresenceRoom,
   RecordRoom,
   workerErrorHandler,
@@ -24,6 +26,8 @@ import {
   resolveAuth,
 } from './src/server/http-routes.js'
 import { registerRealtimeRoutes } from './src/server/realtime-routes.js'
+import { securityHeaders } from './src/lib/security-headers.js'
+import { tasks as cronTasks, runTask as runCronTask } from './src/cron.js'
 
 // Dynamic deploy reads this manifest to create the app's DO bindings.
 export const __DO_MANIFEST__ = [
@@ -31,6 +35,7 @@ export const __DO_MANIFEST__ = [
   { binding: 'YJS_ROOMS', className: 'AppYjsRoom', sqlite: true },
   { binding: 'CANVAS_ROOMS', className: 'AppCanvasRoom', sqlite: true },
   { binding: 'PRESENCE_ROOMS', className: 'AppPresenceRoom', sqlite: true },
+  { binding: 'CRON_ROOMS', className: 'AppCronRoom', sqlite: true },
 ] as const satisfies DOManifest
 
 export class AppRecordRoom extends RecordRoom<Env> {
@@ -121,6 +126,16 @@ export class AppYjsRoom extends YjsRoom<Env> {}
 export class AppCanvasRoom extends CanvasRoom<Env> {}
 export class AppPresenceRoom extends PresenceRoom<Env> {}
 
+export class AppCronRoom extends CronRoom<Env> {
+  constructor(state: DurableObjectState, env: Env) {
+    super(state, env, { tasks: cronTasks })
+  }
+
+  protected async onTask(taskName: string): Promise<void> {
+    await runCronTask(taskName, this.env)
+  }
+}
+
 export interface Env extends DOBindings<typeof __DO_MANIFEST__> {
   ASSETS: Fetcher
   /**
@@ -165,12 +180,33 @@ export interface Env extends DOBindings<typeof __DO_MANIFEST__> {
 
 export type AppContext = { Bindings: Env }
 
+function withSecurityHeaders(response: Response, pageUrl: string): Response {
+  const headers = new Headers(response.headers)
+  const cookies = response.headers.getSetCookie()
+  if (cookies.length > 0) {
+    headers.delete('set-cookie')
+    for (const cookie of cookies) headers.append('set-cookie', cookie)
+  }
+  for (const [name, value] of Object.entries(securityHeaders(pageUrl))) headers.set(name, value)
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
+
 const app = new Hono<AppContext>()
 app.use('/api/*', cors())
+// A Durable Object exists only once something fetches it, and CronRoom arms
+// its alarm on that first fetch. Wake it from the request path so a deployed
+// day can delete expired rooms without waiting for a visitor.
+app.use('*', async (c, next) => {
+  armCronRoom(c.executionCtx, c.env.CRON_ROOMS, `app:${c.env.DEEPSPACE_APP_ID}`, cronTasks)
+  await next()
+  if (c.res.status === 101 || c.res.webSocket) return
+  c.res = withSecurityHeaders(c.res, c.req.url)
+})
 
 // Registration order is part of the worker contract. The wildcard auth route
 // follows its special cases, and static is last. There is no assistant route:
 // the only model call is generateDebrief, and only the hiring manager can make it.
+// The cron room deletes expired rooms. It does not call the model.
 registerAuthAndIntegrationRoutes(app)
 registerRealtimeRoutes(app)
 registerActionRoutes(app, resolveAuth)

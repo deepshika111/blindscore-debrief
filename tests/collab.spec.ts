@@ -421,6 +421,8 @@ test('a claimed invite cannot be reused, and the token is not in later reads', a
   await hm.page.getByLabel('Panelist 1').fill('Interviewer')
   await hm.page.getByRole('button', { name: 'Open room' }).click()
   await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
+  await hm.page.getByTestId('activity').locator('summary').click()
+  await expect(hm.page.getByTestId('activity')).toContainText('Invite created', { timeout: 20_000 })
   const candidateId = new URL(hm.page.url()).pathname.split('/').pop() ?? ''
   const invite = await hm.page.getByTestId('invite-link').inputValue()
   const token = new URL(invite).searchParams.get('t') ?? ''

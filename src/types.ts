@@ -25,6 +25,9 @@ export interface CandidateData {
   pendingPanel?: string[]
   pendingNames?: Record<string, string>
   isDemo?: boolean | number
+  meetingAt?: string
+  meetingMinutes?: number
+  meetingSequence?: number
 }
 
 export interface ScorecardData {

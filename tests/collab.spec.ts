@@ -15,6 +15,7 @@
  * persisted to `~/.deepspace/playwright-states/`), context creation, and
  * cleanup. No need to manage browser contexts manually.
  */
+import { readFile } from 'node:fs/promises'
 import type { Page } from '@playwright/test'
 import { test, expect, loadAllTestAccounts } from 'deepspace/testing'
 
@@ -455,6 +456,21 @@ test('a saved person refills the next room and can be removed', async ({ users }
   await hm.page.getByLabel('Email').fill('jordan@example.com')
   await hm.page.getByRole('button', { name: 'Open room' }).click()
   await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
+  const candidateId = new URL(hm.page.url()).pathname.split('/').pop() ?? ''
+  await hm.page.getByTestId('meeting-at').fill('2026-10-06T15:30')
+  await hm.page.getByTestId('meeting-minutes').fill('45')
+  await hm.page.getByRole('button', { name: 'Save time' }).click()
+  await expect(hm.page.getByTestId('add-calendar')).toBeVisible({ timeout: 20_000 })
+  const [download] = await Promise.all([
+    hm.page.waitForEvent('download'),
+    hm.page.getByTestId('add-calendar').click(),
+  ])
+  const file = await download.path()
+  const ics = file ? await readFile(file, 'utf8') : ''
+  expect(ics).toContain('BEGIN:VCALENDAR')
+  expect(ics).toContain(`UID:debrief-${candidateId}@blindscore.app.space`)
+  expect(ics).toContain(`/c/${candidateId}`)
+  expect(ics).not.toContain('?t=')
 
   await hm.page.goto('/dashboard')
   await hm.page.getByTestId('new-candidate').click()

@@ -480,6 +480,9 @@ test('a saved person refills the next room and can be removed', async ({ users }
   await hm.page.getByLabel('Email').fill('jordan@example.com')
   await hm.page.getByRole('button', { name: 'Open room' }).click()
   await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
+  await expect(hm.page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 20_000 })
+  await hm.page.getByRole('button', { name: 'Send' }).click()
+  await expect(hm.page.getByText('Email is not set up on this app yet.')).toBeVisible({ timeout: 20_000 })
   const candidateId = new URL(hm.page.url()).pathname.split('/').pop() ?? ''
   await hm.page.getByTestId('meeting-at').fill('2026-10-06T15:30')
   await hm.page.getByTestId('meeting-minutes').fill('45')

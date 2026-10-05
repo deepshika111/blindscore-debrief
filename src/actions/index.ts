@@ -16,13 +16,35 @@ import { createDeepSpaceAI } from 'deepspace/worker'
 import type { Env } from '../../worker'
 import { claimInvite } from '../server/claim-invite'
 import { chargeRate } from '../server/rate-limit'
+import { debriefIcs } from '../lib/calendar'
 import { classifyInvite, hashToken, normalizeEmail, randomToken } from '../lib/invites'
+import { inviteMail, safeOrigin } from '../lib/mail'
 import { rubricById, rubricFromRoom, type Rubric } from '../lib/rubrics'
 import { computeStats } from '../lib/stats'
 import type { Recommendation, RevealCard } from '../types'
 import { RECS } from '../types'
 
 const fail = (error: string): ActionResult<never> => ({ success: false, error })
+
+function base64(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+async function postResend(apiKey: string, body: Record<string, unknown>): Promise<boolean> {
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
 const nameText = z.string().trim().min(1).max(60)
 const roleText = z.string().trim().min(1).max(80)
 const noteText = z.string().trim().min(1).max(1000)
@@ -70,6 +92,7 @@ interface CandidateRow {
   meetingSequence: number
   rubric: Rubric
   dueAt: string
+  emailsSent: number
 }
 
 function strings(value: unknown): string[] {
@@ -127,6 +150,7 @@ function readCandidate(record: { recordId: string; updatedAt: string; data: Reco
     meetingSequence: typeof data.meetingSequence === 'number' ? data.meetingSequence : 0,
     rubric: rubricFromRoom(data.rubric),
     dueAt: typeof data.dueAt === 'string' ? data.dueAt : '',
+    emailsSent: typeof data.emailsSent === 'number' ? data.emailsSent : 0,
   }
 }
 
@@ -817,6 +841,61 @@ export const actions: Record<string, ActionHandler<Env>> = {
     const removed = await tools.remove('contacts', contactId)
     if (!removed.success) return removed
     return { success: true, data: { removed: true } }
+  },
+
+  sendInvites: async ({ userId, params, tools, env }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    if (cand.status !== 'scoring') return fail('already_revealed')
+    const origin = safeOrigin(params.origin)
+    if (!origin) return fail('bad_code')
+    if (!env.RESEND_API_KEY || !env.RESEND_FROM) return fail('email_unconfigured')
+    if (!Array.isArray(params.invites) || params.invites.length === 0 || params.invites.length > 20) return fail('bad_size')
+    if (cand.emailsSent + params.invites.length > 20) return fail('rate_limited')
+
+    let sent = 0
+    for (const item of params.invites) {
+      if (!item || typeof item !== 'object') return fail('bad_code')
+      const row = item as { id?: unknown; token?: unknown }
+      if (typeof row.id !== 'string' || typeof row.token !== 'string' || row.token.length < 20) return fail('bad_code')
+      const loaded = await tools.get('invites', row.id)
+      if (!loaded.success) return fail('not_found')
+      const invite = readInvite(loaded.data.record)
+      if (!invite || loaded.data.record.data.candidateId !== cand.recordId || invite.status === 'revoked') return fail('not_found')
+      if (!invite.email) return fail('bad_email')
+      if (await hashToken(row.token) !== invite.tokenHash) return fail('invite_used')
+      const link = `${origin}/join/${cand.recordId}?t=${encodeURIComponent(row.token)}`
+      const ics = cand.meetingAt
+        ? debriefIcs({
+            candidateId: cand.recordId,
+            candidate: cand.name,
+            role: cand.role,
+            meetingAt: cand.meetingAt,
+            meetingMinutes: cand.meetingMinutes || 30,
+            sequence: cand.meetingSequence,
+            roomUrl: `${origin}/c/${cand.recordId}`,
+          })
+        : undefined
+      const mail = inviteMail({ candidate: cand.name, role: cand.role, link, ics })
+      const delivered = await postResend(env.RESEND_API_KEY, {
+        from: env.RESEND_FROM,
+        to: [invite.email],
+        subject: mail.subject,
+        text: mail.text,
+        ...(mail.attachment
+          ? { attachments: [{ filename: mail.attachment.filename, content: base64(mail.attachment.content) }] }
+          : {}),
+      })
+      if (!delivered) return fail('email_failed')
+      const stamped = await tools.update('invites', invite.recordId, { sentAt: new Date().toISOString() })
+      if (!stamped.success) return stamped
+      sent += 1
+    }
+    const counted = await tools.update('candidates', cand.recordId, { emailsSent: cand.emailsSent + sent })
+    if (!counted.success) return counted
+    return { success: true, data: { sent } }
   },
 
   setDue: async ({ userId, params, tools }) => {

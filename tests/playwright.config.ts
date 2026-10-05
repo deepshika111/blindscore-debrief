@@ -20,6 +20,7 @@ export default defineConfig({
   use: {
     baseURL: BASE_URL,
     headless: true,
+    video: process.env.PLAYWRIGHT_VIDEO === 'on' ? 'on' : 'off',
   },
   webServer: {
     command: `npx vite --port ${PORT} --strictPort --host`,

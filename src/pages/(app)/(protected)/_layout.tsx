@@ -16,11 +16,13 @@
 import { useEffect, useState } from 'react'
 import { Link, Outlet } from 'react-router-dom'
 import { AuthGate, AuthOverlay } from 'deepspace'
+import { ManagerNotices } from '@/components/ManagerNotices'
 import { Button } from '@/components/ui'
 
 export default function ProtectedLayout() {
   return (
     <AuthGate fallback={<SignedOutPanel />}>
+      <ManagerNotices />
       <Outlet />
     </AuthGate>
   )

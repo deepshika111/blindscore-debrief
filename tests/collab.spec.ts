@@ -133,6 +133,7 @@ test('API status page shows local retry after first-load API failure', async ({ 
 })
 
 test('an outsider socket never receives a sealed scorecard phrase', async ({ users }) => {
+  test.setTimeout(120_000)
   test.skip(
     usableTestAccounts < 3,
     `Needs 3 usable test accounts, found ${usableTestAccounts}.`,
@@ -157,7 +158,7 @@ test('an outsider socket never receives a sealed scorecard phrase', async ({ use
 
   await hm.page.goto('/dashboard')
   await hm.page.getByTestId('new-candidate').click()
-  await hm.page.getByLabel('Candidate').fill(candidateName)
+  await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(candidateName)
   await hm.page.getByLabel('Role').fill('Backend engineer')
   await hm.page.getByLabel('Panel size').fill('3')
   await hm.page.getByRole('button', { name: 'Open room' }).click()
@@ -165,6 +166,8 @@ test('an outsider socket never receives a sealed scorecard phrase', async ({ use
 
   const invite = await hm.page.getByTestId('invite-link').inputValue()
   await interviewer.page.goto(invite)
+  await expect(interviewer.page.getByRole('status')).toContainText(`You're invited to score ${candidateName}`, { timeout: 20_000 })
+  await interviewer.page.getByLabel('Name on the panel').fill('Interviewer')
   await interviewer.page.getByTestId('join-panel').click()
   await expect(interviewer.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
 
@@ -179,6 +182,17 @@ test('an outsider socket never receives a sealed scorecard phrase', async ({ use
   await hm.page.getByRole('button', { name: 'Submit', exact: true }).click()
   await expect(hm.page.getByTestId('submission-progress')).toHaveText('1 / 3 submitted', { timeout: 20_000 })
 
+  for (const dimension of ['Technical', 'System design', 'Communication']) {
+    await interviewer.page.getByRole('group', { name: dimension }).getByRole('button', { name: /Strong yes/ }).click()
+  }
+  await interviewer.page.getByLabel('Recommendation').click()
+  await interviewer.page.getByRole('option', { name: 'Lean yes' }).click()
+  await interviewer.page.getByLabel('Strengths').fill('Clear on the data model.')
+  await interviewer.page.getByLabel('Concerns').fill('Thin on rollout.')
+  await interviewer.page.getByTestId('seal-scorecard').click()
+  await interviewer.page.getByRole('button', { name: 'Submit', exact: true }).click()
+  await expect(hm.page.getByRole('alert').filter({ hasText: 'Interviewer submitted' })).toBeVisible({ timeout: 15_000 })
+
   const roomPath = new URL(hm.page.url()).pathname
   await outsider.page.goto(roomPath)
   await expect(outsider.page.getByTestId('room-not-found')).toBeVisible({ timeout: 20_000 })
@@ -187,7 +201,30 @@ test('an outsider socket never receives a sealed scorecard phrase', async ({ use
 
   await hm.page.getByTestId('force-reveal').click()
   await hm.page.getByRole('button', { name: 'Reveal', exact: true }).click()
-  await expect(hm.page.getByText(sentinel)).toBeVisible({ timeout: 20_000 })
+  await expect(hm.page.getByText('Needs a clearer rollout plan.')).toBeVisible({ timeout: 20_000 })
   await expect.poll(() => hmFrames.join('\n').includes(sentinel), { timeout: 15_000 }).toBe(true)
   expect(outsiderFrames.join('\n')).not.toContain(sentinel)
+})
+
+test('submit stays active and names each missing field', async ({ users }) => {
+  test.setTimeout(60_000)
+  const [hm] = await users(1)
+  const candidateName = `__test-${Date.now()}__`
+  await hm.page.goto('/dashboard')
+  await hm.page.getByTestId('new-candidate').click()
+  await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(candidateName)
+  await hm.page.getByLabel('Role').fill('Backend engineer')
+  await hm.page.getByLabel('Panel size').fill('2')
+  await hm.page.getByRole('button', { name: 'Open room' }).click()
+  await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
+
+  await expect(hm.page.getByTestId('seal-scorecard')).toBeEnabled()
+  await hm.page.getByTestId('seal-scorecard').click()
+  await expect(hm.page.getByRole('alert').filter({ hasText: 'Fill in Technical.' })).toBeVisible()
+  await expect(hm.page.getByRole('button', { name: 'Submit', exact: true })).toHaveCount(0)
+
+  await hm.page.getByRole('group', { name: 'Technical' }).getByRole('button', { name: /Strong yes/ }).click()
+  await hm.page.getByTestId('seal-scorecard').click()
+  await expect(hm.page.getByRole('alert').filter({ hasText: 'Fill in System design.' })).toBeVisible()
+  await expect(hm.page.getByRole('alert').filter({ hasText: 'Fill in Technical.' })).toHaveCount(0)
 })

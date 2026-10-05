@@ -8,7 +8,9 @@ import { Badge, Button, ConfirmModal, useToast } from '@/components/ui'
 import { callAction, explainActionError } from '@/lib/action'
 import { debriefIcs } from '@/lib/calendar'
 import { dueLabel, nudgeText } from '@/lib/due'
-import { RUBRICS, type Rubric } from '@/lib/rubrics'
+import { markdownDebrief, plainDebrief } from '@/lib/export'
+import { RUBRICS, metricLabel, type Rubric } from '@/lib/rubrics'
+import { discussFirst } from '@/lib/stats'
 import { inviteMessage, mailtoHref } from '@/lib/invites'
 import type { CandidateData, DebriefData, RevealCard, RevealData, ScorecardData, SubmissionData } from '@/types'
 
@@ -42,6 +44,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const [decisionChoice, setDecisionChoice] = useState<'hire' | 'no_hire' | 'hold'>('hold')
   const [decisionReason, setDecisionReason] = useState('')
   const [decisionBusy, setDecisionBusy] = useState(false)
+  const [exportText, setExportText] = useState('')
   const [shellReady, setShellReady] = useState(false)
   const shellTicket = useRef(0)
 
@@ -496,6 +499,31 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const reason = reveal?.data.reason === 'forced' || shell?.reason === 'forced' ? 'forced' : 'auto'
   const panelNames = { ...(shell?.panelNames ?? {}), ...(data.panelNames ?? {}) }
   const gridReady = Boolean(reveal) || shell?.status === 'revealed'
+  const rubric = shell?.rubric ?? RUBRICS.swe
+
+  async function copyDebrief(kind: 'plain' | 'markdown') {
+    const report = {
+      candidate: room.name,
+      role: room.role,
+      rubric: rubric.label,
+      metrics: rubric.metrics.map((metric) => ({
+        label: metric.label,
+        scores: shownCards.map((card) => `${card.name} ${card.scores[metric.key] ?? ''}`).join(', '),
+      })),
+      discussFirst: discussFirst(shownCards, rubric.metrics.map((metric) => metric.key)).map((key) => metricLabel(rubric, key)),
+      divergences: (debrief?.summary?.divergences ?? []).map((item) => ({ label: metricLabel(rubric, item.dim), note: item.note })),
+      questions: debrief?.summary?.questions ?? [],
+      decision: shell?.decision ? { label: decisionLabel(shell.decision.decision), reason: shell.decision.reason } : null,
+    }
+    const text = kind === 'plain' ? plainDebrief(report) : markdownDebrief(report)
+    setExportText(text)
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // The text stays in the field when the clipboard is blocked.
+    }
+    success('Debrief copied')
+  }
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6">
@@ -721,6 +749,16 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
           </label>
           <Button className="mt-3" type="button" disabled={decisionBusy} onClick={() => void saveDecision()}>Save decision</Button>
         </section>
+      ) : null}
+
+      {revealed && gridReady ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={() => void copyDebrief('plain')}>Copy plain text</Button>
+          <Button type="button" variant="outline" onClick={() => void copyDebrief('markdown')}>Copy Markdown</Button>
+        </div>
+      ) : null}
+      {exportText ? (
+        <textarea data-testid="export-text" readOnly value={exportText} className="mt-3 min-h-24 w-full rounded-lg border border-border bg-card px-3 py-2 text-xs" />
       ) : null}
 
       <p className="mt-6 text-sm text-muted-foreground" data-testid="submission-progress">

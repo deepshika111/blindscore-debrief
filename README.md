@@ -16,6 +16,7 @@ Interviewers score a candidate without seeing each other. The room opens when th
 - A scorecard submitted after a reveals row exists gets 409 and is not stored. If a reveal lands after the card write, the action deletes that card and its submission so a stored card cannot sit outside the snapshot.
 - `records.create` updates an existing id. The reveal row carries an immutable seal, so a second writer reads the first snapshot and does not replace it. Setting the candidate status is a second write. If that write is missed, `roomShell` sets status to `revealed` before it returns.
 - Rooms and scores are deleted automatically after 90 days. A sample room is deleted after 7 days. Saved people are kept.
+- Calibration is your own average against the rest of each panel. The hiring manager and the app owner do not see anyone else's numbers.
 
 ## Limits
 

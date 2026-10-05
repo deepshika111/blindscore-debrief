@@ -17,6 +17,7 @@ import type { Env } from '../../worker'
 import { claimInvite } from '../server/claim-invite'
 import { chargeRate } from '../server/rate-limit'
 import { debriefIcs } from '../lib/calendar'
+import { calibrate, type CalibrationRoom } from '../lib/calibration'
 import { acceptDebrief } from '../lib/debrief-check'
 import { classifyInvite, hashToken, normalizeEmail, randomToken } from '../lib/invites'
 import { inviteMail, safeOrigin } from '../lib/mail'
@@ -1357,6 +1358,39 @@ export const actions: Record<string, ActionHandler<Env>> = {
       return [{ action, at }]
     })
     return { success: true, data: { entries } }
+  },
+
+  myCalibration: async ({ userId, tools }) => {
+    const owned = await tools.query('scorecards', { where: { interviewerId: userId }, limit: 100 })
+    if (!owned.success) return owned
+    const candidateIds: string[] = []
+    for (const row of owned.data.records) {
+      const candidateId = row.data.candidateId
+      if (typeof candidateId === 'string' && !candidateIds.includes(candidateId)) candidateIds.push(candidateId)
+    }
+    const rooms: CalibrationRoom[] = []
+    for (const candidateId of candidateIds) {
+      const reveal = await tools.get('reveals', candidateId)
+      if (!reveal.success) continue
+      const cand = await loadCandidate(tools, candidateId)
+      if (!cand) continue
+      const cards = readRevealCards(reveal.data.record.data.cards)
+      const mine = cards.find((card) => card.interviewerId === userId)
+      if (!mine) continue
+      rooms.push({
+        metrics: cand.rubric.metrics.flatMap((metric) => {
+          const score = mine.scores[metric.key]
+          if (typeof score !== 'number') return []
+          const others = cards.flatMap((card) => {
+            if (card.interviewerId === userId) return []
+            const other = card.scores[metric.key]
+            return typeof other === 'number' ? [other] : []
+          })
+          return [{ key: metric.key, label: metric.label, mine: score, others }]
+        }),
+      })
+    }
+    return { success: true, data: calibrate(rooms) }
   },
 
   markDebriefViewed: async ({ userId, params, tools }) => {

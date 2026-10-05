@@ -9,7 +9,7 @@ In hiring debriefs, whoever speaks first anchors everyone else. BlindScore is an
 ## 2. How the three DeepSpace integrations do real work
 
 - Auth: every action trusts only the verified JWT subject (`ctx.userId`). Panel membership comes from a one-time invite link, checked on the server.
-- Records + RBAC + server actions: five collections in `src/schemas/blindscore.ts`. Scorecards are `read: 'own'` for member and admin, so the Durable Object does not send them to anyone else. Clients have `create: false` on all five; `src/actions/index.ts` owns the writes. `uniqueOn` blocks a second scorecard for the same interviewer.
+- Records + RBAC + server actions: scores live in `scorecards` and `reveals`. Scorecards are `read: 'own'` for member and admin, so the Durable Object does not send them to anyone else. Later collections (invites, contacts, decisions, an audit log) are server-written too. Clients have `create: false`. `src/actions/index.ts` owns the writes. `uniqueOn` blocks a second scorecard for the same interviewer.
 - AI (`createDeepSpaceAI` + `generateText`): `generateDebrief` runs on the server after reveal, with no `authToken`, so the call bills the app owner. The model id is `claude-sonnet-5`. No API key is in the repo.
 
 ## 3. Key decisions and tradeoffs
@@ -19,7 +19,7 @@ In hiring debriefs, whoever speaks first anchors everyone else. BlindScore is an
 - One stored debrief is shared by the panel. `computeStats` does the arithmetic; the model is told not to recommend hire or no-hire, and its JSON is parsed with zod. If that call throws, the same row is rewritten with `status: 'failed'` and the stats are kept.
 - The hiring manager can force reveal as soon as one scorecard is in. Other panel members cannot, until the manager clicks “Allow force reveal to panel members”. Allowing it does not reveal the room.
 - Overall yes/no comes from recommendations. Each metric is a circle: the center is the number of submitted scorecards, and the ring is the largest group that shared one score against everyone else.
-- Cut: email invites, calendar, resumes, custom rubrics, multi-org.
+- Cut from the first version: resumes and multi-org. Email, a calendar file, role rubrics, a decision log, and export came later. Each is a server action or a file built from data the action already returned.
 
 ## 4. How I directed AI coding tools
 
@@ -45,9 +45,17 @@ Checked on 4 Oct 2026 against a local `deepspace` dev server. Playwright used a 
   - `demo/outsider.webm` — the same room URL ends on “Room not found”.
 - No API key was added. `.dev.vars`, `.wrangler`, and `.deepspace` are gitignored.
 
+## Invites, before and after
+
+The first invite was one shared link. The hiring manager approved or denied each person who opened it. The current invite is one token per person. The server stores a hash. A second account that opens a claimed, revoked, or expired link gets 403. The shared link still exists only when the manager turns on “Allow open link.”
+
+The Activation page still counts invite opened, claimed, joined, first scorecard, reveal, and debrief viewed. This experiment has not been run. There are no conversion numbers yet.
+
+The write-up of the build is [Build a blind-voting app with DeepSpace in a day](docs/build-a-blind-voting-app.md).
+
 ## Known limitations
 
-- A submission racing a force reveal can be stored but excluded from the reveal snapshot. It stays on the author-only scorecard.
-- The invite link is a bearer secret. Anyone holding it can join until the panel is full.
+- A scorecard that arrives after the reveal row exists is deleted with its submission and returns 409.
+- Sign-in does not provide a verified email, so a token is not locked to an address. Whoever holds that person's link can claim the seat until it is used.
 - All rooms share one app scope. At a larger scale, each candidate would be its own RecordScope.
 - `roomShell` and `forceReveal` return the room the page has to draw (name, role, cards, missing people, panel names). The records socket often never delivers `query_result` in Safari against the local certificate, so the screen cannot wait on it. That is more than ids and flags.

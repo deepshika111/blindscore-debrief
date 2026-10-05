@@ -41,12 +41,17 @@ new_sqlite_classes = ["AppRecordRoom", "AppYjsRoom", "AppCanvasRoom", "AppPresen
 tag = "v2"
 deleted_classes = ["AppCronRoom", "AppJobRoom"]
 
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["AppCronRoom"]
+
 [durable_objects]
 bindings = [
   { name = "RECORD_ROOMS", class_name = "AppRecordRoom" },
   { name = "YJS_ROOMS", class_name = "AppYjsRoom" },
   { name = "CANVAS_ROOMS", class_name = "AppCanvasRoom" },
   { name = "PRESENCE_ROOMS", class_name = "AppPresenceRoom" },
+  { name = "CRON_ROOMS", class_name = "AppCronRoom" },
 ]
 
 # For per-app resources (D1, KV, Vectorize, R2, Queues, AI Search), set the id

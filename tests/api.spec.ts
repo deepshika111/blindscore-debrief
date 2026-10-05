@@ -7,10 +7,21 @@ test.describe('API tests', () => {
   })
 
   test('scorecard actions reject a missing bearer token', async ({ request }) => {
-    for (const name of ['createCandidate', 'inviteNotice', 'joinPanel', 'approveJoin', 'denyJoin', 'rotateInvite', 'removeMember', 'leaveRoom', 'submitScorecard', 'submissionNotices', 'requestForceReveal', 'forceReveal', 'allowForceReveal', 'generateDebrief', 'markDebriefViewed', 'funnelReport', 'createDemoRoom', 'roomShell', 'deleteCandidate', 'addInvite', 'revokeInvite', 'resendInvite', 'removeContact', 'setMeeting', 'setDue', 'nudge', 'sendInvites', 'recordDecision']) {
+    for (const name of ['createCandidate', 'inviteNotice', 'joinPanel', 'approveJoin', 'denyJoin', 'rotateInvite', 'removeMember', 'leaveRoom', 'submitScorecard', 'submissionNotices', 'requestForceReveal', 'forceReveal', 'allowForceReveal', 'generateDebrief', 'markDebriefViewed', 'funnelReport', 'createDemoRoom', 'roomShell', 'deleteCandidate', 'addInvite', 'revokeInvite', 'resendInvite', 'removeContact', 'setMeeting', 'setDue', 'nudge', 'sendInvites', 'recordDecision', 'roomActivity']) {
       const res = await request.post(`/api/actions/${name}`, { data: {} })
       expect(res.status(), name).toBe(401)
     }
+  })
+
+  test('page responses send security headers', async ({ request }) => {
+    const response = await request.get('/')
+    const csp = response.headers()['content-security-policy'] ?? ''
+    expect(csp).toContain("default-src 'self'")
+    expect(csp).toContain("frame-ancestors 'none'")
+    expect(csp).toContain('connect-src')
+    expect(response.headers()['x-content-type-options']).toBe('nosniff')
+    expect(response.headers()['referrer-policy']).toBe('no-referrer')
+    expect(response.headers()['permissions-policy']).toContain('camera=()')
   })
 
   test('WebSocket endpoint exists', async ({ page }) => {

@@ -23,13 +23,13 @@ export default function Landing() {
               Scores stay sealed until everyone has spoken.
             </h1>
             <p className="mt-6 max-w-md text-base text-muted-foreground">
-              The first interviewer to post a number anchors the rest of the panel. BlindScore keeps each scorecard private until the room reveals them together.
+              The first interviewer to post a number anchors the rest of the panel. BlindScore keeps each scorecard private until the room reveals them together. Rooms and scores are deleted automatically after 90 days.
             </p>
           </div>
           <ol className="space-y-4 border-t border-border pt-6 text-sm">
             <li>
               <span className="font-display text-2xl text-primary">01</span>
-              <p className="mt-1 text-foreground">Set the panel size and share one invite link.</p>
+              <p className="mt-1 text-foreground">Invite each person with their own link.</p>
             </li>
             <li>
               <span className="font-display text-2xl text-primary">02</span>

@@ -50,7 +50,7 @@ npx deepspace add <feature>
 ```
 
 BlindScore does not register an assistant. `generateDebrief` is the only model
-call, and only the hiring manager of that room can make it. There is no cron
-and no job queue. If `npx deepspace agent` reports `not_authenticated`, run
+call, and only the hiring manager of that room can make it. A daily cron
+deletes rooms past the retention window. There is no job queue. If `npx deepspace agent` reports `not_authenticated`, run
 `npx deepspace auth login --help` and use the operator-supplied credential path
 it names; never invent credentials or put a password on the command line.

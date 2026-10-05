@@ -10,7 +10,7 @@ Interviewers score a candidate without seeing each other. The room opens when th
 - The caller is `userId` from the verified session. An id in the request body is never treated as the caller.
 - Not on the panel, or no such room, returns 404. A panel member using a hiring-manager action returns 403.
 - `deleteCandidate` is hiring-manager only. A panel member can `leaveRoom` only before reveal and only if they have not submitted.
-- Joining adds the person to a pending list. They cannot read the room or submit until the hiring manager approves them. `rotateInvite` kills the old link. `removeMember` works before reveal and only if that person has not submitted.
+- Each panelist gets one link. The server stores a hash of the token, not the token. A second account that opens a claimed, revoked, or expired link gets 403. The same person can open their own link again. An open link that needs approval is off unless the manager turns it on. Pending people still cannot read or submit. `removeMember` works before reveal and only if that person has not submitted.
 - Sign-in does not give the action a verified email, so invites are not locked to an address.
 - Before reveal, `roomShell` returns names, who submitted, flags, and the caller's own card. Other scores and notes are not included. After reveal, the snapshot is returned only to panel members.
 - A scorecard submitted after a reveals row exists gets 409 and is not stored. If a reveal lands after the card write, the action deletes that card and its submission so a stored card cannot sit outside the snapshot.

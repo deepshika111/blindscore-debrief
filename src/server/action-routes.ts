@@ -61,6 +61,9 @@ export function registerActionRoutes(app: Hono<AppContext>, resolveAuth: Resolve
     if (!result.success && result.error === 'forbidden') {
       return c.json({ success: false, error: result.error, message: 'Forbidden' }, 403)
     }
+    if (!result.success && result.error === 'invite_used') {
+      return c.json({ success: false, error: result.error, message: 'This invite was already used or is no longer valid.' }, 403)
+    }
     if (!result.success && result.error === 'not_found') {
       return c.json({ success: false, error: result.error, message: 'Room not found' }, 404)
     }

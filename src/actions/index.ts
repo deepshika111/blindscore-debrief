@@ -14,7 +14,9 @@ import { z } from 'zod'
 import type { ActionHandler, ActionResult, ActionTools } from 'deepspace/worker'
 import { createDeepSpaceAI } from 'deepspace/worker'
 import type { Env } from '../../worker'
+import { claimInvite } from '../server/claim-invite'
 import { chargeRate } from '../server/rate-limit'
+import { classifyInvite, hashToken, normalizeEmail, randomToken } from '../lib/invites'
 import { computeStats } from '../lib/stats'
 import type { Recommendation, RevealCard } from '../types'
 import { RECS } from '../types'
@@ -25,7 +27,7 @@ const nameText = z.string().trim().min(1).max(60)
 const roleText = z.string().trim().min(1).max(80)
 const noteText = z.string().trim().min(1).max(1000)
 const DEBRIEF_ATTEMPTS = 5
-const FUNNEL = ['room_created', 'invite_opened', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened'] as const
+const FUNNEL = ['room_created', 'invite_created', 'invite_opened', 'invite_claimed', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened'] as const
 type FunnelEvent = (typeof FUNNEL)[number]
 
 function asRecord(value: object): Record<string, unknown> {
@@ -61,6 +63,7 @@ interface CandidateRow {
   pendingPanel: string[]
   pendingNames: Record<string, string>
   isDemo: boolean
+  allowOpenLink: boolean
 }
 
 function strings(value: unknown): string[] {
@@ -112,6 +115,7 @@ function readCandidate(record: { recordId: string; updatedAt: string; data: Reco
     pendingPanel: strings(data.pendingPanel),
     pendingNames: namesOf(data.pendingNames),
     isDemo: data.isDemo === true || data.isDemo === 1,
+    allowOpenLink: data.allowOpenLink === 'yes',
   }
 }
 
@@ -239,9 +243,13 @@ async function repairRevealed(tools: Tools, cand: CandidateRow): Promise<void> {
   if (updated.success) cand.status = 'revealed'
 }
 
-async function logEvent(tools: Tools, cand: CandidateRow, name: FunnelEvent, userId: string): Promise<void> {
+async function logEvent(tools: Tools, cand: CandidateRow, name: FunnelEvent, userId: string, suffix = ''): Promise<void> {
   if (cand.isDemo && name !== 'demo_opened') return
-  const recordId = name === 'scorecard_submitted' ? `${cand.recordId}:${name}:${userId}` : `${cand.recordId}:${name}`
+  const recordId = name === 'scorecard_submitted'
+    ? `${cand.recordId}:${name}:${userId}`
+    : suffix
+      ? `${cand.recordId}:${name}:${suffix}`
+      : `${cand.recordId}:${name}`
   const existing = await tools.get('events', recordId)
   if (existing.success) return
   await tools.create('events', asRecord({
@@ -457,6 +465,103 @@ function sampleCard(
   }
 }
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+
+interface Panelist {
+  label: string
+  email: string
+}
+
+function parsePanelists(value: unknown): ActionResult<never> | Panelist[] {
+  if (!Array.isArray(value) || value.length > 5) return fail('bad_size')
+  const people: Panelist[] = []
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') return fail('bad_name')
+    const raw = entry as { label?: unknown; email?: unknown }
+    const label = cap(raw.label, 'bad_name')
+    if (typeof label !== 'string') return fail('bad_name')
+    const email = normalizeEmail(raw.email)
+    if (email === null) return fail('bad_email')
+    people.push({ label, email })
+  }
+  return people
+}
+
+async function issueInvite(
+  tools: Tools,
+  cand: CandidateRow,
+  person: Panelist,
+): Promise<ActionResult<{ id: string; label: string; email: string; token: string }>> {
+  const token = randomToken()
+  const now = new Date()
+  const created = await tools.create('invites', asRecord({
+    candidateId: cand.recordId,
+    hiringManagerId: cand.hiringManagerId,
+    label: person.label,
+    email: person.email,
+    tokenHash: await hashToken(token),
+    status: 'pending',
+    claimedBy: '',
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + WEEK_MS).toISOString(),
+  }))
+  if (!created.success) return created
+  await logEvent(tools, cand, 'invite_created', cand.hiringManagerId, created.data.recordId)
+  return { success: true, data: { id: created.data.recordId, label: person.label, email: person.email, token } }
+}
+
+interface StoredInvite {
+  recordId: string
+  label: string
+  email: string
+  status: string
+  claimedBy: string
+  expiresAt: string
+  tokenHash: string
+}
+
+function readInvite(record: { recordId: string; data: Record<string, unknown> }): StoredInvite | null {
+  const data = record.data
+  if (typeof data.label !== 'string' || typeof data.tokenHash !== 'string' || typeof data.expiresAt !== 'string') return null
+  return {
+    recordId: record.recordId,
+    label: data.label,
+    email: typeof data.email === 'string' ? data.email : '',
+    status: typeof data.status === 'string' ? data.status : '',
+    claimedBy: typeof data.claimedBy === 'string' ? data.claimedBy : '',
+    expiresAt: data.expiresAt,
+    tokenHash: data.tokenHash,
+  }
+}
+
+async function invitesFor(tools: Tools, candidateId: string): Promise<ActionResult<StoredInvite[]>> {
+  const rows = await tools.query('invites', { where: { candidateId }, limit: 20 })
+  if (!rows.success) return rows
+  return { success: true, data: rows.data.records.map(readInvite).filter((row): row is StoredInvite => row !== null) }
+}
+
+async function takeSeat(tools: Tools, cand: CandidateRow, userId: string, name: string): Promise<ActionResult<{ joined: true; pending: false }>> {
+  if (cand.panel.includes(userId)) {
+    const named = await rememberName(tools, cand, userId, name)
+    if (!named.success) return named
+    const synced = await syncSubmissionPanels(tools, cand.recordId, cand.panel)
+    if (!synced.success) return synced
+    return { success: true, data: { joined: true, pending: false } }
+  }
+  if (cand.status !== 'scoring') return fail('already_revealed')
+  if (cand.panel.length >= cand.expectedPanelSize) return fail('panel_full')
+  const panel = [...cand.panel, userId]
+  const updated = await tools.update('candidates', cand.recordId, asRecord({
+    panel,
+    panelNames: { ...cand.panelNames, [userId]: name },
+  }))
+  if (!updated.success) return updated
+  const synced = await syncSubmissionPanels(tools, cand.recordId, panel)
+  if (!synced.success) return synced
+  await logEvent(tools, cand, 'panel_joined', userId)
+  return { success: true, data: { joined: true, pending: false } }
+}
+
 export const actions: Record<string, ActionHandler<Env>> = {
   createCandidate: async ({ userId, params, tools, env }) => {
     if (!(await chargeRate(env, `create:${userId}`, 20, 60 * 60 * 1000))) return fail('rate_limited')
@@ -464,8 +569,12 @@ export const actions: Record<string, ActionHandler<Env>> = {
     if (typeof name !== 'string') return name
     const role = cap(params.role, 'bad_role', roleText)
     if (typeof role !== 'string') return role
-    const size = params.expectedPanelSize
-    if (typeof size !== 'number' || !Number.isInteger(size) || size < 2 || size > 6) return fail('bad_size')
+    const people = parsePanelists(params.panelists)
+    if (!Array.isArray(people)) return people
+    const allowOpenLink = params.allowOpenLink === true
+    if (people.length === 0 && !allowOpenLink) return fail('bad_size')
+    const size = people.length + 1
+    if (size > 6) return fail('bad_size')
 
     const inviteCode = crypto.randomUUID()
     const created = await tools.create('candidates', asRecord({
@@ -482,17 +591,34 @@ export const actions: Record<string, ActionHandler<Env>> = {
       pendingPanel: [],
       pendingNames: {},
       isDemo: false,
+      allowOpenLink: allowOpenLink ? 'yes' : 'no',
     }))
     if (!created.success) return created
     const cand = await loadCandidate(tools, created.data.recordId)
-    if (cand) await logEvent(tools, cand, 'room_created', userId)
-    return { success: true, data: { candidateId: created.data.recordId, inviteCode } }
+    if (!cand) return fail('not_found')
+    await logEvent(tools, cand, 'room_created', userId)
+    const invites: Array<{ id: string; label: string; email: string; token: string }> = []
+    for (const person of people) {
+      const issued = await issueInvite(tools, cand, person)
+      if (!issued.success) return issued
+      invites.push(issued.data)
+    }
+    return { success: true, data: { candidateId: created.data.recordId, inviteCode: allowOpenLink ? inviteCode : '', invites } }
   },
 
   inviteNotice: async ({ userId, params, tools }) => {
     const cand = await loadCandidate(tools, params.candidateId)
     if (!cand) return fail('not_found')
-    if (typeof params.inviteCode !== 'string' || params.inviteCode !== cand.inviteCode) return fail('bad_code')
+    if (typeof params.token === 'string' && params.token) {
+      const rows = await invitesFor(tools, cand.recordId)
+      if (!rows.success) return rows
+      const hash = await hashToken(params.token)
+      const invite = rows.data.find((row) => row.tokenHash === hash)
+      if (!invite || classifyInvite(invite, userId, Date.now()) === 'used') return fail('invite_used')
+      await logEvent(tools, cand, 'invite_opened', userId, invite.recordId)
+      return { success: true, data: { name: cand.name, role: cand.role } }
+    }
+    if (!cand.allowOpenLink || typeof params.inviteCode !== 'string' || params.inviteCode !== cand.inviteCode) return fail('bad_code')
     await logEvent(tools, cand, 'invite_opened', userId)
     return { success: true, data: { name: cand.name, role: cand.role } }
   },
@@ -506,6 +632,8 @@ export const actions: Record<string, ActionHandler<Env>> = {
     const subs = await tools.query('submissions', { where: { candidateId: cand.recordId }, limit: 20 })
     const records = subs.success ? subs.data.records : []
     const isManager = cand.hiringManagerId === userId
+    const inviteRows = isManager ? await invitesFor(tools, cand.recordId) : null
+    if (inviteRows && !inviteRows.success) return inviteRows
     const submittedNames = records.map((row) => {
       const interviewerId = typeof row.data.interviewerId === 'string' ? row.data.interviewerId : ''
       return cand.panelNames[interviewerId] || 'Interviewer'
@@ -515,7 +643,8 @@ export const actions: Record<string, ActionHandler<Env>> = {
       role: cand.role,
       status: rv.success ? 'revealed' as const : cand.status,
       expectedPanelSize: cand.expectedPanelSize,
-      inviteCode: isManager ? cand.inviteCode : '',
+      inviteCode: isManager && cand.allowOpenLink ? cand.inviteCode : '',
+      allowOpenLink: isManager && cand.allowOpenLink,
       isManager,
       forceRevealAllowed: cand.forceRevealAllowed,
       submitted: subs.success ? subs.data.count : records.length,
@@ -523,8 +652,15 @@ export const actions: Record<string, ActionHandler<Env>> = {
       mine: records.some((row) => row.data.interviewerId === userId),
       panelNames: cand.panelNames,
       revealRequestNames: cand.revealRequests.map((id) => cand.panelNames[id] || 'An interviewer'),
-      ...(isManager
+      ...(isManager && inviteRows && inviteRows.success
         ? {
+            invites: inviteRows.data.map((row) => ({
+              id: row.recordId,
+              label: row.label,
+              email: row.email,
+              status: row.status,
+              name: row.claimedBy ? cand.panelNames[row.claimedBy] || row.label : '',
+            })),
             pending: cand.pendingPanel.map((id) => ({ userId: id, name: cand.pendingNames[id] || 'Someone' })),
             roster: cand.panel
               .filter((id) => id !== userId)
@@ -549,9 +685,26 @@ export const actions: Record<string, ActionHandler<Env>> = {
   joinPanel: async ({ userId, params, tools, env }) => {
     const cand = await loadCandidate(tools, params.candidateId)
     if (!cand) return fail('not_found')
-    if (typeof params.inviteCode !== 'string' || params.inviteCode !== cand.inviteCode) return fail('bad_code')
     const name = await chosenName(tools, userId, params.displayName)
     if (typeof name !== 'string') return name
+    if (typeof params.token === 'string' && params.token) {
+      const rows = await invitesFor(tools, cand.recordId)
+      if (!rows.success) return rows
+      const hash = await hashToken(params.token)
+      const invite = rows.data.find((row) => row.tokenHash === hash)
+      if (!invite) return fail('invite_used')
+      const view = classifyInvite(invite, userId, Date.now())
+      if (view === 'used') return fail('invite_used')
+      if (view === 'claim') {
+        if (!cand.panel.includes(userId) && !(await chargeRate(env, `join:${userId}`, 10, 60 * 1000))) return fail('rate_limited')
+        if (!(await claimInvite(env, invite.recordId, userId))) return fail('invite_used')
+        const marked = await tools.update('invites', invite.recordId, asRecord({ status: 'claimed', claimedBy: userId }))
+        if (!marked.success) return marked
+        await logEvent(tools, cand, 'invite_claimed', userId, invite.recordId)
+      }
+      return takeSeat(tools, cand, userId, name)
+    }
+    if (!cand.allowOpenLink || typeof params.inviteCode !== 'string' || params.inviteCode !== cand.inviteCode) return fail('bad_code')
     if (cand.panel.includes(userId)) {
       if (cand.status !== 'scoring') return rememberName(tools, cand, userId, name)
       const named = await rememberName(tools, cand, userId, name)
@@ -626,6 +779,82 @@ export const actions: Record<string, ActionHandler<Env>> = {
     const updated = await tools.update('candidates', cand.recordId, { inviteCode })
     if (!updated.success) return updated
     return { success: true, data: { inviteCode } }
+  },
+
+  addInvite: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    if (cand.status !== 'scoring') return fail('already_revealed')
+    if (cand.expectedPanelSize >= 6) return fail('bad_size')
+    const label = cap(params.label, 'bad_name')
+    if (typeof label !== 'string') return label
+    const email = normalizeEmail(params.email)
+    if (email === null) return fail('bad_email')
+    const grown = await tools.update('candidates', cand.recordId, { expectedPanelSize: cand.expectedPanelSize + 1 })
+    if (!grown.success) return grown
+    cand.expectedPanelSize += 1
+    return issueInvite(tools, cand, { label, email })
+  },
+
+  revokeInvite: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    if (cand.status !== 'scoring') return fail('remove_blocked')
+    const inviteId = typeof params.inviteId === 'string' ? params.inviteId : ''
+    const loaded = await tools.get('invites', inviteId)
+    if (!loaded.success) return fail('not_found')
+    const invite = readInvite(loaded.data.record)
+    if (!invite || loaded.data.record.data.candidateId !== cand.recordId) return fail('not_found')
+    if (invite.status === 'revoked') return { success: true, data: { revoked: true } }
+    if (invite.claimedBy) {
+      const subs = await tools.query('submissions', { where: { candidateId: cand.recordId }, limit: 20 })
+      if (!subs.success) return subs
+      if (subs.data.records.some((row) => row.data.interviewerId === invite.claimedBy)) return fail('remove_blocked')
+      const dropped = await dropMember(tools, cand, invite.claimedBy, true)
+      if (!dropped.success) return dropped
+    }
+    const revoked = await tools.update('invites', invite.recordId, asRecord({ status: 'revoked', claimedBy: '' }))
+    if (!revoked.success) return revoked
+    const nextSize = Math.max(cand.panel.length, cand.expectedPanelSize - 1)
+    if (nextSize !== cand.expectedPanelSize) {
+      const shrunk = await tools.update('candidates', cand.recordId, { expectedPanelSize: nextSize })
+      if (!shrunk.success) return shrunk
+    }
+    return { success: true, data: { revoked: true } }
+  },
+
+  resendInvite: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    if (cand.status !== 'scoring') return fail('remove_blocked')
+    const inviteId = typeof params.inviteId === 'string' ? params.inviteId : ''
+    const loaded = await tools.get('invites', inviteId)
+    if (!loaded.success) return fail('not_found')
+    const invite = readInvite(loaded.data.record)
+    if (!invite || loaded.data.record.data.candidateId !== cand.recordId) return fail('not_found')
+    if (invite.claimedBy) {
+      const subs = await tools.query('submissions', { where: { candidateId: cand.recordId }, limit: 20 })
+      if (!subs.success) return subs
+      if (subs.data.records.some((row) => row.data.interviewerId === invite.claimedBy)) return fail('remove_blocked')
+      const dropped = await dropMember(tools, cand, invite.claimedBy, true)
+      if (!dropped.success) return dropped
+    }
+    const token = randomToken()
+    const now = new Date()
+    const replaced = await tools.update('invites', invite.recordId, asRecord({
+      tokenHash: await hashToken(token),
+      status: 'pending',
+      claimedBy: '',
+      expiresAt: new Date(now.getTime() + WEEK_MS).toISOString(),
+    }))
+    if (!replaced.success) return replaced
+    return { success: true, data: { id: invite.recordId, label: invite.label, email: invite.email, token } }
   },
 
   removeMember: async ({ userId, params, tools }) => {
@@ -966,6 +1195,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
       panel: [userId],
       panelNames: { [userId]: manager, 'sample-alex': 'Alex Chen', 'sample-sam': 'Sam Ortiz', 'sample-jordan': 'Jordan Lee' },
       inviteCode: crypto.randomUUID(),
+      allowOpenLink: 'no',
       forceRevealAllowed: 'yes',
       revealRequests: [],
       pendingPanel: [],

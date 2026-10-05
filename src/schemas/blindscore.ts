@@ -52,6 +52,11 @@ export const candidatesSchema: CollectionSchema = {
       interpretation: { kind: 'select', options: ['no', 'yes'] },
     },
     { name: 'isDemo', storage: 'number', interpretation: { kind: 'boolean' } },
+    {
+      name: 'allowOpenLink',
+      storage: 'text',
+      interpretation: { kind: 'select', options: ['no', 'yes'] },
+    },
   ],
   collaboratorsField: 'panel',
   permissions: panelOnly,
@@ -134,7 +139,7 @@ export const eventsSchema: CollectionSchema = {
       required: true,
       interpretation: {
         kind: 'select',
-        options: ['room_created', 'invite_opened', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened'],
+        options: ['room_created', 'invite_created', 'invite_opened', 'invite_claimed', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened'],
       },
     },
     text('userId', true),
@@ -144,6 +149,30 @@ export const eventsSchema: CollectionSchema = {
   permissions: adminRead,
 }
 
+const managerOwn = { '*': noAccess, member: ownRead, admin: ownRead }
+
+export const invitesSchema: CollectionSchema = {
+  name: 'invites',
+  columns: [
+    text('candidateId', true),
+    text('hiringManagerId', true),
+    text('label', true),
+    text('email'),
+    text('tokenHash', true),
+    {
+      name: 'status',
+      storage: 'text',
+      required: true,
+      interpretation: { kind: 'select', options: ['pending', 'claimed', 'revoked'] },
+    },
+    text('claimedBy'),
+    { name: 'createdAt', storage: 'text', interpretation: { kind: 'datetime' }, required: true },
+    { name: 'expiresAt', storage: 'text', interpretation: { kind: 'datetime' }, required: true },
+  ],
+  ownerField: 'hiringManagerId',
+  permissions: managerOwn,
+}
+
 export const blindscoreSchemas = [
   candidatesSchema,
   scorecardsSchema,
@@ -151,4 +180,5 @@ export const blindscoreSchemas = [
   revealsSchema,
   debriefsSchema,
   eventsSchema,
+  invitesSchema,
 ]

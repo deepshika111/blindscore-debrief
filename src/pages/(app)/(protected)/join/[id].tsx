@@ -7,6 +7,7 @@ import { Button, Input, useToast } from '@/components/ui'
 export default function JoinPage() {
   const { id = '' } = useParams()
   const [params] = useSearchParams()
+  const token = params.get('t') ?? ''
   const code = params.get('code') ?? ''
   const { user } = useAuthUser()
   const { error: toastError, info } = useToast()
@@ -29,12 +30,12 @@ export default function JoinPage() {
   }, [seeded, user])
 
   useEffect(() => {
-    if (!id || !code) return
-    const key = `${id}?${code}`
+    if (!id || (!token && !code)) return
+    const key = `${id}?${token || code}`
     if (told.current === key) return
     told.current = key
     let cancelled = false
-    void callAction<{ name: string; role: string }>('inviteNotice', { candidateId: id, inviteCode: code })
+    void callAction<{ name: string; role: string }>('inviteNotice', { candidateId: id, inviteCode: code, token })
       .then((data) => {
         if (cancelled) return
         setInvite(data)
@@ -46,15 +47,16 @@ export default function JoinPage() {
     return () => {
       cancelled = true
     }
-  }, [id, code])
+  }, [id, code, token])
 
   useEffect(() => {
-    if (!waiting || !id || !code) return
+    if (!waiting || !id || (!code && !token)) return
     let cancelled = false
     const tick = () => {
       void callAction<{ joined?: boolean }>('joinPanel', {
         candidateId: id,
         inviteCode: code,
+        token,
         displayName: displayName.trim(),
       })
         .then((data) => {
@@ -67,7 +69,7 @@ export default function JoinPage() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [waiting, id, code, displayName])
+  }, [waiting, id, code, token, displayName])
 
   async function join() {
     setJoining(true)
@@ -76,6 +78,7 @@ export default function JoinPage() {
       const data = await callAction<{ joined?: boolean; pending?: boolean }>('joinPanel', {
         candidateId: id,
         inviteCode: code,
+        token,
         displayName: displayName.trim(),
       })
       if (data.pending) {
@@ -83,6 +86,9 @@ export default function JoinPage() {
         setJoining(false)
         return
       }
+      const clean = new URL(window.location.href)
+      clean.searchParams.delete('t')
+      window.history.replaceState({}, '', `${clean.pathname}${clean.search}`)
       // Collaborator-list changes are not a documented rebroadcast.
       // A full load is what puts this interviewer on the room socket.
       window.location.assign(`/c/${id}`)
@@ -135,13 +141,13 @@ export default function JoinPage() {
           className="mt-4"
           data-testid="join-panel"
           onClick={() => void join()}
-          disabled={joining || !code || displayName.trim().length === 0}
+          disabled={joining || (!code && !token) || displayName.trim().length === 0}
           loading={joining}
         >
           Join panel
         </Button>
       )}
-      {!code ? <p className="mt-3 text-sm text-destructive">This invite link is missing its code. Copy the whole link, including the part after ?code=.</p> : null}
+      {!code && !token ? <p className="mt-3 text-sm text-destructive">This invite link is missing its code. Copy the whole link.</p> : null}
     </div>
   )
 }

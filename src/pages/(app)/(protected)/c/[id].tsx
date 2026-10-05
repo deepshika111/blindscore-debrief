@@ -23,6 +23,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const { error: toastError, success } = useToast()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [revealing, setRevealing] = useState(false)
+  const [askedReveal, setAskedReveal] = useState(false)
   const [debriefBusy, setDebriefBusy] = useState(false)
   const [shell, setShell] = useState<RoomShell | null>(null)
   const [shellReady, setShellReady] = useState(false)
@@ -168,6 +169,19 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
     }
   }
 
+  async function askForceReveal() {
+    setRevealing(true)
+    try {
+      await callAction('requestForceReveal', { candidateId })
+      setAskedReveal(true)
+      success('Request sent', 'The hiring manager will see your name.')
+    } catch (error) {
+      toastError('Could not request force reveal', explainActionError(error))
+    } finally {
+      setRevealing(false)
+    }
+  }
+
   async function allowForceReveal() {
     setRevealing(true)
     try {
@@ -290,22 +304,31 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
               Allow force reveal to panel members
             </Button>
           ) : null}
-          <Button
-            variant="outline"
-            data-testid="force-reveal"
-            disabled={revealing}
-            onClick={() => void prepareReveal()}
-          >
-            Force reveal
-          </Button>
+          {!isManager && !shell?.forceRevealAllowed ? (
+            <Button variant="outline" disabled={revealing} onClick={() => void askForceReveal()}>
+              Request force reveal
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              data-testid="force-reveal"
+              disabled={revealing}
+              onClick={() => void prepareReveal()}
+            >
+              Force reveal
+            </Button>
+          )}
           <p className="text-sm text-muted-foreground">
             {isManager
-              ? shell?.forceRevealAllowed
-                ? 'The panel can force reveal.'
-                : 'Interviewers cannot force reveal until you allow it.'
-              : shell?.forceRevealAllowed
-                ? 'The hiring manager has allowed force reveal.'
-                : 'Waiting for the hiring manager to allow force reveal.'}
+              ? requestLine(shell?.revealRequestNames ?? [])
+                ?? (shell?.forceRevealAllowed
+                  ? 'The panel can force reveal.'
+                  : 'Interviewers cannot force reveal until you allow it.')
+              : askedReveal
+                ? 'You asked the hiring manager to allow force reveal.'
+                : shell?.forceRevealAllowed
+                  ? 'The hiring manager has allowed force reveal.'
+                  : 'Waiting for the hiring manager to allow force reveal.'}
           </p>
         </div>
       ) : null}
@@ -339,12 +362,20 @@ interface RoomShell {
   inviteCode: string
   isManager: boolean
   forceRevealAllowed?: boolean
+  revealRequestNames?: string[]
   submitted: number
   mine: boolean
   cards?: RevealCard[]
   missing?: string[]
   reason?: 'auto' | 'forced'
   panelNames?: Record<string, string>
+}
+
+function requestLine(names: string[]): string | null {
+  const asked = names.filter((name) => name.trim().length > 0)
+  if (asked.length === 0) return null
+  if (asked.length === 1) return `${asked[0]} is requesting force reveal.`
+  return `${asked.join(', ')} are requesting force reveal.`
 }
 
 function shellRoom(shell: RoomShell | null): CandidateData | null {

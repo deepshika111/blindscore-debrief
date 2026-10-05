@@ -39,6 +39,7 @@ interface CandidateRow {
   panelNames: Record<string, string>
   inviteCode: string
   forceRevealAllowed: boolean
+  revealRequests: string[]
 }
 
 function strings(value: unknown): string[] {
@@ -85,6 +86,7 @@ function readCandidate(record: { recordId: string; updatedAt: string; data: Reco
     panelNames: namesOf(data.panelNames),
     inviteCode: data.inviteCode,
     forceRevealAllowed: data.forceRevealAllowed === 'yes',
+    revealRequests: strings(data.revealRequests),
   }
 }
 
@@ -320,6 +322,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
       panelNames: { [userId]: await callerName(tools, userId) },
       inviteCode,
       forceRevealAllowed: 'no',
+      revealRequests: [],
     }))
     if (!created.success) return created
     return { success: true, data: { candidateId: created.data.recordId, inviteCode } }
@@ -349,6 +352,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
       submitted: subs.success ? subs.data.count : records.length,
       mine: records.some((row) => row.data.interviewerId === userId),
       panelNames: cand.panelNames,
+      revealRequestNames: cand.revealRequests.map((id) => cand.panelNames[id] || 'An interviewer'),
     }
     if (cand.status !== 'revealed') return { success: true, data: shell }
     const opened = await openedRoom(tools, cand)
@@ -442,7 +446,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
       const name = typeof row.data.name === 'string' ? row.data.name : 'Candidate'
       managed.set(row.recordId, { name, panelNames: namesOf(row.data.panelNames) })
     }
-    const notices: Array<{ id: string; candidateId: string; candidateName: string; name: string }> = []
+    const notices: Array<{ id: string; kind: 'submitted' | 'reveal'; candidateId: string; candidateName: string; name: string }> = []
     for (const row of submissions.data.records) {
       const candidateId = typeof row.data.candidateId === 'string' ? row.data.candidateId : ''
       const interviewerId = typeof row.data.interviewerId === 'string' ? row.data.interviewerId : ''
@@ -450,12 +454,39 @@ export const actions: Record<string, ActionHandler<Env>> = {
       if (!cand || !interviewerId) continue
       notices.push({
         id: row.recordId,
+        kind: 'submitted',
         candidateId,
         candidateName: cand.name,
         name: cand.panelNames[interviewerId] || 'An interviewer',
       })
     }
+    for (const [candidateId, cand] of managed) {
+      const requests = strings(
+        candidates.data.records.find((row) => row.recordId === candidateId)?.data.revealRequests,
+      )
+      for (const interviewerId of requests) {
+        notices.push({
+          id: `${candidateId}:reveal:${interviewerId}`,
+          kind: 'reveal',
+          candidateId,
+          candidateName: cand.name,
+          name: cand.panelNames[interviewerId] || 'An interviewer',
+        })
+      }
+    }
     return { success: true, data: { notices } }
+  },
+
+  requestForceReveal: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    if (!cand.panel.includes(userId) || cand.hiringManagerId === userId) return fail('forbidden')
+    if (cand.status !== 'scoring') return fail('already_revealed')
+    if (cand.forceRevealAllowed) return { success: true, data: { requested: false } }
+    if (cand.revealRequests.includes(userId)) return { success: true, data: { requested: true } }
+    const updated = await tools.update('candidates', cand.recordId, asRecord({ revealRequests: [...cand.revealRequests, userId] }))
+    if (!updated.success) return updated
+    return { success: true, data: { requested: true } }
   },
 
   allowForceReveal: async ({ userId, params, tools }) => {

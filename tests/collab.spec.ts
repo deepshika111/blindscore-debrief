@@ -292,6 +292,10 @@ test('sample debrief opens on the split without a second account', async ({ user
     await hm.page.getByRole('button', { name: 'Save decision' }).click()
   }
   await expect(hm.page.getByTestId('decision')).toContainText('Hold', { timeout: 20_000 })
+  await hm.page.getByRole('button', { name: 'Copy plain text' }).click()
+  await expect(hm.page.getByTestId('export-text')).toHaveValue(/Sample candidate/)
+  await expect(hm.page.getByTestId('export-text')).toHaveValue(/Discuss first/)
+  await expect(hm.page.getByTestId('export-text')).toHaveValue(/Hold/)
   const again = await postAction(hm.page, 'recordDecision', { candidateId, decision: 'hire', reason: 'Changed our mind.' })
   expect(again.status).toBe(409)
   await hm.page.goto('/admin/funnel')

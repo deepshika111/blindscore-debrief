@@ -177,7 +177,9 @@ test('sealed scorecards stay off the socket and out of pre-reveal HTTP responses
   await hm.page.getByTestId('new-candidate').click()
   await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(candidateName)
   await hm.page.getByLabel('Role').fill('Backend engineer')
-  await hm.page.getByLabel('Panel size').fill('3')
+  await hm.page.getByLabel('Panelist 1').fill('Interviewer')
+  await hm.page.getByRole('button', { name: 'Add panelist' }).click()
+  await hm.page.getByLabel('Panelist 2').fill('Spare')
   await hm.page.getByRole('button', { name: 'Open room' }).click()
   await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
 
@@ -186,9 +188,6 @@ test('sealed scorecards stay off the socket and out of pre-reveal HTTP responses
   await expect(interviewer.page.getByRole('status')).toContainText(`You're invited to score ${candidateName}`, { timeout: 20_000 })
   await interviewer.page.getByLabel('Name on the panel').fill('Interviewer')
   await interviewer.page.getByTestId('join-panel').click()
-  await expect(interviewer.page.getByTestId('join-waiting')).toBeVisible()
-  await expect(hm.page.getByRole('button', { name: 'Approve Interviewer' })).toBeVisible({ timeout: 20_000 })
-  await hm.page.getByRole('button', { name: 'Approve Interviewer' }).click()
   await expect(interviewer.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
   await interviewer.page.getByRole('button', { name: 'Request force reveal' }).click()
   await expect(hm.page.getByRole('alert').filter({ hasText: 'Interviewer is requesting force reveal' })).toBeVisible({ timeout: 15_000 })
@@ -259,7 +258,7 @@ test('submit stays active and names each missing field', async ({ users }) => {
   await hm.page.getByTestId('new-candidate').click()
   await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(candidateName)
   await hm.page.getByLabel('Role').fill('Backend engineer')
-  await hm.page.getByLabel('Panel size').fill('2')
+  await hm.page.getByLabel('Panelist 1').fill('Interviewer')
   await hm.page.getByRole('button', { name: 'Open room' }).click()
   await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
 
@@ -296,7 +295,7 @@ test('two last submissions leave one snapshot with both cards', async ({ users }
   await hm.page.getByTestId('new-candidate').click()
   await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(candidateName)
   await hm.page.getByLabel('Role').fill('Backend engineer')
-  await hm.page.getByLabel('Panel size').fill('2')
+  await hm.page.getByLabel('Panelist 1').fill('Interviewer')
   await hm.page.getByRole('button', { name: 'Open room' }).click()
   await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
   const candidateId = new URL(hm.page.url()).pathname.split('/').pop() ?? ''
@@ -304,8 +303,6 @@ test('two last submissions leave one snapshot with both cards', async ({ users }
   await interviewer.page.goto(invite)
   await interviewer.page.getByLabel('Name on the panel').fill('Interviewer')
   await interviewer.page.getByTestId('join-panel').click()
-  await expect(hm.page.getByRole('button', { name: 'Approve Interviewer' })).toBeVisible({ timeout: 20_000 })
-  await hm.page.getByRole('button', { name: 'Approve Interviewer' }).click()
   await expect(interviewer.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
 
   const card = {
@@ -334,11 +331,13 @@ test('deny, rotate, leave, and remove stay off the panel, and the funnel is owne
   await hm.page.getByTestId('new-candidate').click()
   await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(candidateName)
   await hm.page.getByLabel('Role').fill('Backend engineer')
-  await hm.page.getByLabel('Panel size').fill('2')
+  await hm.page.getByLabel('Allow open link').check()
+  await hm.page.getByLabel('Panelist 1').fill('Spare')
   await hm.page.getByRole('button', { name: 'Open room' }).click()
   await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
   const candidateId = new URL(hm.page.url()).pathname.split('/').pop() ?? ''
-  const invite = await hm.page.getByTestId('invite-link').inputValue()
+  await expect(hm.page.getByTestId('open-invite-link')).not.toHaveValue('', { timeout: 20_000 })
+  const invite = await hm.page.getByTestId('open-invite-link').inputValue()
   const inviteCode = new URL(invite).searchParams.get('code') ?? ''
 
   await interviewer.page.goto(invite)
@@ -393,4 +392,47 @@ test('deny, rotate, leave, and remove stay off the panel, and the funnel is owne
 
   const funnel = await postAction(interviewer.page, 'funnelReport', {})
   expect(funnel.status).toBe(403)
+})
+
+test('a claimed invite cannot be reused, and the token is not in later reads', async ({ users }) => {
+  test.setTimeout(90_000)
+  test.skip(usableTestAccounts < 3, `Needs 3 usable test accounts, found ${usableTestAccounts}.`)
+  const [hm, interviewer, outsider] = await users(3)
+  const candidateName = `__test-${Date.now()}__`
+  await hm.page.goto('/dashboard')
+  await hm.page.getByTestId('new-candidate').click()
+  await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(candidateName)
+  await hm.page.getByLabel('Role').fill('Backend engineer')
+  await hm.page.getByLabel('Panelist 1').fill('Interviewer')
+  await hm.page.getByRole('button', { name: 'Open room' }).click()
+  await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
+  const candidateId = new URL(hm.page.url()).pathname.split('/').pop() ?? ''
+  const invite = await hm.page.getByTestId('invite-link').inputValue()
+  const token = new URL(invite).searchParams.get('t') ?? ''
+  expect(token.length).toBeGreaterThan(20)
+
+  await interviewer.page.goto(invite)
+  await interviewer.page.getByLabel('Name on the panel').fill('Interviewer')
+  await interviewer.page.getByTestId('join-panel').click()
+  await expect(interviewer.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
+  expect(interviewer.page.url()).not.toContain('t=')
+
+  await outsider.page.goto('/dashboard')
+  const stolen = await postAction(outsider.page, 'joinPanel', { candidateId, token, displayName: 'Outsider' })
+  expect(stolen.status).toBe(403)
+  expect(stolen.text).toContain('already used')
+
+  const again = await postAction(interviewer.page, 'joinPanel', { candidateId, token, displayName: 'Interviewer' })
+  expect(again.status).toBe(200)
+  expect(JSON.parse(again.text)).toMatchObject({ success: true, data: { joined: true } })
+
+  const shell = await postAction(hm.page, 'roomShell', { candidateId })
+  expect(shell.text).not.toContain(token)
+  const inviteId = (JSON.parse(shell.text) as { data?: { invites?: Array<{ id: string }> } }).data?.invites?.[0]?.id ?? ''
+  expect(inviteId).not.toBe('')
+
+  const revoked = await postAction(hm.page, 'revokeInvite', { candidateId, inviteId })
+  expect(revoked.status).toBe(200)
+  const after = await postAction(interviewer.page, 'joinPanel', { candidateId, token, displayName: 'Interviewer' })
+  expect(after.status).toBe(403)
 })

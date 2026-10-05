@@ -6,6 +6,8 @@ const COPY: Record<string, string> = {
   bad_role: 'Enter a role, up to 80 characters.',
   bad_size: 'Panel size must be a whole number from 2 to 6.',
   bad_code: 'This invite link is not valid.',
+  invite_used: 'This invite was already used or is no longer valid.',
+  bad_email: 'Enter a valid email, or leave it blank.',
   panel_full: 'This panel is already full.',
   not_found: 'Room not found.',
   forbidden: 'You are not allowed to do that.',

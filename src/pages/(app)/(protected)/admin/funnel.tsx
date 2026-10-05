@@ -4,7 +4,9 @@ import { callAction, explainActionError } from '@/lib/action'
 
 const LABELS: Record<string, string> = {
   room_created: 'Room created',
+  invite_created: 'Invite created',
   invite_opened: 'Invite opened',
+  invite_claimed: 'Invite claimed',
   panel_joined: 'Joined',
   scorecard_submitted: 'Scorecard submitted',
   room_revealed: 'Revealed',

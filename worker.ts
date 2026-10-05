@@ -46,6 +46,9 @@ export class AppRecordRoom extends RecordRoom<Env> {
     if (url.pathname === '/blindscore/rate-limit' && request.method === 'POST') {
       return this.charge(request)
     }
+    if (url.pathname === '/blindscore/claim-invite' && request.method === 'POST') {
+      return this.claimInvite(request)
+    }
     return super.fetch(request)
   }
 
@@ -86,6 +89,31 @@ export class AppRecordRoom extends RecordRoom<Env> {
     if (row.count >= limit) return Response.json({ allowed: false })
     sql.exec(`UPDATE blindscore_rate SET count = count + 1 WHERE key = ?`, key)
     return Response.json({ allowed: true })
+  }
+
+  /** Pending and unexpired rows only. A second caller sees the first claim. */
+  private async claimInvite(request: Request): Promise<Response> {
+    const body = (await request.json()) as { inviteId?: unknown; userId?: unknown; now?: unknown }
+    const inviteId = typeof body.inviteId === 'string' ? body.inviteId : ''
+    const userId = typeof body.userId === 'string' ? body.userId : ''
+    const now = typeof body.now === 'string' ? body.now : ''
+    if (!inviteId || !userId || !now) return Response.json({ claimed: false })
+    const sql = this.storage.sql
+    try {
+      sql.exec(
+        `UPDATE "c_invites" SET "col_status" = 'claimed', "col_claimedby" = ?, "_updated_at" = ? WHERE "_row_id" = ? AND "col_status" = 'pending' AND "col_expiresat" > ?`,
+        userId,
+        now,
+        inviteId,
+        now,
+      )
+      const rows = sql
+        .exec<{ claimed: string }>(`SELECT "col_claimedby" AS claimed FROM "c_invites" WHERE "_row_id" = ?`, inviteId)
+        .toArray()
+      return Response.json({ claimed: rows[0]?.claimed === userId })
+    } catch {
+      return Response.json({ claimed: false })
+    }
   }
 }
 

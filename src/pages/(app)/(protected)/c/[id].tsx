@@ -27,6 +27,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const [debriefBusy, setDebriefBusy] = useState(false)
   const [memberBusy, setMemberBusy] = useState('')
   const [shell, setShell] = useState<RoomShell | null>(null)
+  const [savedLinks, setSavedLinks] = useState<SavedLink[]>([])
   const [shellReady, setShellReady] = useState(false)
   const shellTicket = useRef(0)
 
@@ -55,6 +56,15 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
     return () => {
       cancelled = true
       window.clearInterval(timer)
+    }
+  }, [candidateId])
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(`blindscore-links:${candidateId}`)
+      setSavedLinks(raw ? (JSON.parse(raw) as SavedLink[]) : [])
+    } catch {
+      setSavedLinks([])
     }
   }, [candidateId])
 
@@ -236,6 +246,37 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
     }
   }
 
+  async function revoke(inviteId: string) {
+    setMemberBusy(inviteId)
+    try {
+      await callAction('revokeInvite', { candidateId, inviteId })
+      await refreshShell()
+      success('Invite revoked')
+    } catch (error) {
+      toastError('Could not revoke', explainActionError(error))
+    } finally {
+      setMemberBusy('')
+    }
+  }
+
+  async function resend(inviteId: string) {
+    setMemberBusy(inviteId)
+    try {
+      const next = await callAction<{ id: string; label: string; email: string; token: string }>('resendInvite', { candidateId, inviteId })
+      const url = `${window.location.origin}/join/${candidateId}?t=${next.token}`
+      setSavedLinks((current) => {
+        const links = [...current.filter((row) => row.id !== next.id), { id: next.id, label: next.label, email: next.email, url }]
+        sessionStorage.setItem(`blindscore-links:${candidateId}`, JSON.stringify(links))
+        return links
+      })
+      success('New link ready', 'The old one no longer works.')
+    } catch (error) {
+      toastError('Could not replace the link', explainActionError(error))
+    } finally {
+      setMemberBusy('')
+    }
+  }
+
   async function rotateInvite() {
     setMemberBusy('rotate')
     try {
@@ -299,26 +340,40 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
           <p className="mt-1 text-sm text-muted-foreground">{data.role}</p>
         </div>
         {isManager ? (
-          <div className="w-full max-w-md space-y-2">
-            <label className="block text-xs text-muted-foreground" htmlFor="invite-link">
-              Invite link
-            </label>
-            <div className="flex gap-2">
-              <input
-                id="invite-link"
-                data-testid="invite-link"
-                readOnly
-                value={invite}
-                className="h-10 min-w-0 flex-1 rounded-lg border border-border bg-card px-3 text-xs"
-              />
-              <Button type="button" variant="outline" onClick={() => void copyInvite()}>
-                Copy
-              </Button>
-              <Button type="button" variant="outline" disabled={memberBusy === 'rotate'} onClick={() => void rotateInvite()}>
-                New invite link
-              </Button>
-            </div>
-            <p className="break-all text-xs text-muted-foreground">{invite}</p>
+          <div className="w-full max-w-md space-y-3">
+            <input id="invite-link" data-testid="invite-link" readOnly value={savedLinks[0]?.url ?? ''} className="sr-only" />
+            <ul className="space-y-2">
+              {(shell?.invites ?? []).map((row) => {
+                const link = savedLinks.find((saved) => saved.id === row.id)
+                return (
+                  <li key={row.id} className="rounded-xl border border-border px-3 py-2 text-sm">
+                    <p className="font-medium">{row.label}</p>
+                    <p className="text-muted-foreground">{inviteStatus(row)}</p>
+                    {link ? <p className="mt-1 break-all text-xs text-muted-foreground">{link.url}</p> : null}
+                    {!revealed ? (
+                      <div className="mt-2 flex gap-2">
+                        <Button type="button" variant="outline" disabled={memberBusy === row.id} onClick={() => void resend(row.id)}>
+                          New link
+                        </Button>
+                        <Button type="button" variant="outline" disabled={memberBusy === row.id} onClick={() => void revoke(row.id)}>
+                          Revoke
+                        </Button>
+                      </div>
+                    ) : null}
+                  </li>
+                )
+              })}
+            </ul>
+            {shell?.allowOpenLink ? (
+              <div className="space-y-2">
+                <label className="block text-xs text-muted-foreground" htmlFor="open-invite-link">Open link</label>
+                <div className="flex gap-2">
+                  <input id="open-invite-link" data-testid="open-invite-link" readOnly value={invite} className="h-10 min-w-0 flex-1 rounded-lg border border-border bg-card px-3 text-xs" />
+                  <Button type="button" variant="outline" onClick={() => void copyInvite()}>Copy</Button>
+                  <Button type="button" variant="outline" disabled={memberBusy === 'rotate'} onClick={() => void rotateInvite()}>New invite link</Button>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </header>
@@ -449,6 +504,19 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   )
 }
 
+interface SavedLink {
+  id: string
+  label: string
+  email: string
+  url: string
+}
+
+function inviteStatus(row: { status: string; name: string }): string {
+  if (row.status === 'revoked') return 'Revoked'
+  if (row.status === 'claimed') return `Joined as ${row.name || 'panelist'}`
+  return 'Not opened'
+}
+
 interface OpenedRoom {
   cards: RevealCard[]
   missing: string[]
@@ -470,6 +538,8 @@ interface RoomShell {
   submittedNames?: string[]
   pending?: Array<{ userId: string; name: string }>
   roster?: Array<{ userId: string; name: string; submitted: boolean }>
+  allowOpenLink?: boolean
+  invites?: Array<{ id: string; label: string; email: string; status: string; name: string }>
   cards?: RevealCard[]
   missing?: string[]
   reason?: 'auto' | 'forced'

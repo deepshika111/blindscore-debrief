@@ -173,6 +173,18 @@ export const invitesSchema: CollectionSchema = {
   permissions: managerOwn,
 }
 
+export const contactsSchema: CollectionSchema = {
+  name: 'contacts',
+  columns: [
+    text('ownerId', true),
+    text('label', true),
+    text('email'),
+    { name: 'lastUsedAt', storage: 'text', interpretation: { kind: 'datetime' }, required: true },
+  ],
+  ownerField: 'ownerId',
+  permissions: authorOnly,
+}
+
 export const blindscoreSchemas = [
   candidatesSchema,
   scorecardsSchema,
@@ -181,4 +193,5 @@ export const blindscoreSchemas = [
   debriefsSchema,
   eventsSchema,
   invitesSchema,
+  contactsSchema,
 ]

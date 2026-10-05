@@ -442,3 +442,32 @@ test('a claimed invite cannot be reused, and the token is not in later reads', a
   const after = await postAction(interviewer.page, 'joinPanel', { candidateId, token, displayName: 'Interviewer' })
   expect(after.status).toBe(403)
 })
+
+test('a saved person refills the next room and can be removed', async ({ users }) => {
+  test.setTimeout(90_000)
+  const [hm] = await users(1)
+  const candidateName = `__test-${Date.now()}__`
+  await hm.page.goto('/dashboard')
+  await hm.page.getByTestId('new-candidate').click()
+  await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(candidateName)
+  await hm.page.getByLabel('Role').fill('Backend engineer')
+  await hm.page.getByLabel('Panelist 1').fill('Jordan Lee')
+  await hm.page.getByLabel('Email').fill('jordan@example.com')
+  await hm.page.getByRole('button', { name: 'Open room' }).click()
+  await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
+
+  await hm.page.goto('/dashboard')
+  await hm.page.getByTestId('new-candidate').click()
+  await hm.page.getByTestId('same-panel').click()
+  await expect(hm.page.getByLabel('Panelist 1')).toHaveValue('Jordan Lee')
+  await expect(hm.page.getByLabel('Email')).toHaveValue('jordan@example.com')
+  await hm.page.getByLabel('Panelist 1').fill('Jor')
+  await hm.page.getByTestId('contact-suggestion').click()
+  await expect(hm.page.getByLabel('Panelist 1')).toHaveValue('Jordan Lee')
+  await hm.page.getByRole('button', { name: 'Cancel' }).click()
+
+  await hm.page.goto('/settings')
+  await expect(hm.page.getByTestId('saved-person').filter({ hasText: 'Jordan Lee' })).toBeVisible()
+  await hm.page.getByTestId('saved-person').filter({ hasText: 'Jordan Lee' }).getByRole('button', { name: 'Remove' }).click()
+  await expect(hm.page.getByTestId('saved-person').filter({ hasText: 'Jordan Lee' })).toHaveCount(0)
+})

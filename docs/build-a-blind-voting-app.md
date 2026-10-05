@@ -34,6 +34,8 @@ Each panelist gets a random token. The server stores a SHA-256 hash, not the tok
 
 The older flow was one shared link plus Approve and Deny. That path still exists only when the manager turns on “Allow open link.” It is off by default.
 
+Invites are sent with each person's own mailto: link. Sending from the app is not built; it would need a verified sending domain.
+
 ## What fought back
 
 Safari and the local certificate. The records socket often never delivered `query_result` on the self-signed dev cert, so the room sat on “Opening the room…”. `roomShell` is an ordinary POST that returns the names, the count, and, only after reveal, the snapshot. The socket is still the live path. The POST is what keeps the room usable when the socket does not finish. `npm run dev:safari` serves https so the sign-in cookie sticks in Safari.

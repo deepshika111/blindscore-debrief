@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from 'deepspace'
 import { callAction, explainActionError } from '@/lib/action'
-import { RUBRICS, type Rubric } from '@/lib/rubrics'
 import { Button, Input, Label, Modal, useToast } from './ui'
 
 interface ContactRow {
@@ -41,7 +40,6 @@ export function NewCandidateDialog({
   const [role, setRole] = useState('')
   const [rows, setRows] = useState<Array<{ label: string; email: string }>>([{ label: '', email: '' }])
   const [focus, setFocus] = useState(0)
-  const [template, setTemplate] = useState<Rubric['id']>('swe')
   const [openLink, setOpenLink] = useState(false)
   const [saving, setSaving] = useState(false)
   const ready = rows.some((row) => row.label.trim()) || openLink
@@ -84,7 +82,6 @@ export function NewCandidateDialog({
         role,
         panelists,
         allowOpenLink: openLink,
-        rubric: template,
       })
       const links = data.invites.map((invite) => ({
         id: invite.id,
@@ -106,7 +103,6 @@ export function NewCandidateDialog({
       setRole('')
       setRows([{ label: '', email: '' }])
       setOpenLink(false)
-      setTemplate('swe')
       onCreated(data.candidateId)
     } catch (error) {
       toastError('Room not opened', explainActionError(error))
@@ -183,19 +179,6 @@ export function NewCandidateDialog({
               </Button>
             ) : null}
           </div>
-          <label className="block space-y-1.5">
-            <Label htmlFor="candidate-template">Template</Label>
-            <select
-              id="candidate-template"
-              value={template}
-              onChange={(event) => setTemplate(event.target.value as Rubric['id'])}
-              className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm"
-            >
-              {(Object.keys(RUBRICS) as Rubric['id'][]).map((id) => (
-                <option key={id} value={id}>{RUBRICS[id].label}</option>
-              ))}
-            </select>
-          </label>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"

@@ -8,7 +8,7 @@ import { Badge, Button, ConfirmModal, useToast } from '@/components/ui'
 import { callAction, explainActionError } from '@/lib/action'
 import { debriefIcs } from '@/lib/calendar'
 import { dueLabel, nudgeText } from '@/lib/due'
-import { markdownDebrief, plainDebrief } from '@/lib/export'
+import { plainDebrief } from '@/lib/export'
 import { RUBRICS, metricLabel, type Rubric } from '@/lib/rubrics'
 import { discussFirst } from '@/lib/stats'
 import { inviteMessage, mailtoHref } from '@/lib/invites'
@@ -323,10 +323,10 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
     }
   }
 
-  async function resend(inviteId: string) {
+  async function replaceLink(inviteId: string) {
     setMemberBusy(inviteId)
     try {
-      const next = await callAction<{ id: string; label: string; email: string; token: string }>('resendInvite', { candidateId, inviteId })
+      const next = await callAction<{ id: string; label: string; email: string; token: string }>('replaceInvite', { candidateId, inviteId })
       const url = `${window.location.origin}/join/${candidateId}?t=${next.token}`
       setSavedLinks((current) => {
         const links = [...current.filter((row) => row.id !== next.id), { id: next.id, label: next.label, email: next.email, url }]
@@ -374,23 +374,6 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
       toastError('Could not save the due date', explainActionError(error))
     } finally {
       setMeetingBusy(false)
-    }
-  }
-
-  async function sendEmail(inviteId: string, url: string) {
-    const token = new URL(url).searchParams.get('t') ?? ''
-    setMemberBusy(inviteId)
-    try {
-      await callAction('sendInvites', {
-        candidateId,
-        origin: window.location.origin,
-        invites: [{ id: inviteId, token }],
-      })
-      success('Email sent')
-    } catch (error) {
-      toastError('Could not send', explainActionError(error))
-    } finally {
-      setMemberBusy('')
     }
   }
 
@@ -502,7 +485,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const gridReady = Boolean(reveal) || shell?.status === 'revealed'
   const rubric = shell?.rubric ?? RUBRICS.swe
 
-  async function copyDebrief(kind: 'plain' | 'markdown') {
+  async function copyDebrief() {
     const report = {
       candidate: room.name,
       role: room.role,
@@ -516,7 +499,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
       questions: debrief?.summary?.questions ?? [],
       decision: shell?.decision ? { label: decisionLabel(shell.decision.decision), reason: shell.decision.reason } : null,
     }
-    const text = kind === 'plain' ? plainDebrief(report) : markdownDebrief(report)
+    const text = plainDebrief(report)
     setExportText(text)
     try {
       await navigator.clipboard.writeText(text)
@@ -573,11 +556,6 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
                         <Button type="button" variant="outline" onClick={() => void copyLink(link.url)}>
                           Copy
                         </Button>
-                        {link.email ? (
-                          <Button type="button" variant="outline" disabled={memberBusy === row.id} onClick={() => void sendEmail(row.id, link.url)}>
-                            Send
-                          </Button>
-                        ) : null}
                         {canShare ? (
                           <Button type="button" variant="outline" onClick={() => void shareLink(link.url)}>
                             Share
@@ -587,7 +565,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
                     ) : null}
                     {!revealed ? (
                       <div className="mt-2 flex gap-2">
-                        <Button type="button" variant="outline" disabled={memberBusy === row.id} onClick={() => void resend(row.id)}>
+                        <Button type="button" variant="outline" disabled={memberBusy === row.id} onClick={() => void replaceLink(row.id)}>
                           New link
                         </Button>
                         <Button type="button" variant="outline" disabled={memberBusy === row.id} onClick={() => void revoke(row.id)}>
@@ -774,8 +752,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
 
       {revealed && gridReady ? (
         <div className="mt-4 flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={() => void copyDebrief('plain')}>Copy plain text</Button>
-          <Button type="button" variant="outline" onClick={() => void copyDebrief('markdown')}>Copy Markdown</Button>
+          <Button type="button" variant="outline" onClick={() => void copyDebrief()}>Copy debrief</Button>
         </div>
       ) : null}
       {exportText ? (

@@ -4,6 +4,14 @@ import { createRoot, hydrateRoot } from 'react-dom/client'
 import { routes } from '@generouted/react-router/lazy'
 import { createBrowserRouter, RouterProvider } from 'react-router'
 import { installStaleChunkRecovery } from './stale-chunk-recovery'
+// Imported here, not from styles.css: Tailwind inlines CSS @imports without
+// rewriting their url(), so the font files were never emitted.
+import '@fontsource/outfit/latin-400.css'
+import '@fontsource/outfit/latin-500.css'
+import '@fontsource/outfit/latin-600.css'
+import '@fontsource/outfit/latin-700.css'
+import '@fontsource/fraunces/latin-400.css'
+import '@fontsource/fraunces/latin-600.css'
 import './styles.css'
 
 async function main() {

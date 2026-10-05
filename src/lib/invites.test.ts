@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyInvite, hashToken, normalizeEmail } from './invites'
+import { classifyInvite, hashToken, inviteMessage, mailtoHref, normalizeEmail } from './invites'
 
 const future = new Date(Date.now() + 86_400_000).toISOString()
 const past = new Date(Date.now() - 86_400_000).toISOString()
@@ -17,6 +17,16 @@ describe('invites', () => {
     expect(hash).not.toContain('token-a')
     expect(await hashToken('token-a')).toBe(hash)
     expect(await hashToken('token-b')).not.toBe(hash)
+  })
+
+  it('builds a mailto for one person and one link', () => {
+    const message = inviteMessage('Ada', 'Engineer', 'https://blindscore.app.space/join/room?t=only-ada')
+    expect(message.subject).toBe('Score Ada for Engineer')
+    expect(message.body).toContain('only-ada')
+    expect(message.body.match(/only-ada/g)).toHaveLength(1)
+    const href = mailtoHref('Ada@Example.com', 'Ada', 'Engineer', 'https://blindscore.app.space/join/room?t=only-ada')
+    expect(href.startsWith('mailto:Ada%40Example.com?')).toBe(true)
+    expect(href).not.toContain('someone-else')
   })
 
   it('lets the same person reopen and rejects everyone else, revoked, and expired', () => {

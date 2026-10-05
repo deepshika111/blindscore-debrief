@@ -6,6 +6,7 @@ import { RevealGrid } from '@/components/RevealGrid'
 import { ScorecardForm } from '@/components/ScorecardForm'
 import { Badge, Button, ConfirmModal, useToast } from '@/components/ui'
 import { callAction, explainActionError } from '@/lib/action'
+import { inviteMessage, mailtoHref } from '@/lib/invites'
 import type { CandidateData, DebriefData, RevealCard, RevealData, ScorecardData, SubmissionData } from '@/types'
 
 export default function CandidateRoomPage() {
@@ -28,6 +29,8 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const [memberBusy, setMemberBusy] = useState('')
   const [shell, setShell] = useState<RoomShell | null>(null)
   const [savedLinks, setSavedLinks] = useState<SavedLink[]>([])
+  const [emailed, setEmailed] = useState<string[]>([])
+  const [canShare, setCanShare] = useState(false)
   const [shellReady, setShellReady] = useState(false)
   const shellTicket = useRef(0)
 
@@ -63,9 +66,13 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
     try {
       const raw = sessionStorage.getItem(`blindscore-links:${candidateId}`)
       setSavedLinks(raw ? (JSON.parse(raw) as SavedLink[]) : [])
+      const sent = sessionStorage.getItem(`blindscore-emailed:${candidateId}`)
+      setEmailed(sent ? (JSON.parse(sent) as string[]) : [])
     } catch {
       setSavedLinks([])
+      setEmailed([])
     }
+    setCanShare(typeof navigator.share === 'function')
   }, [candidateId])
 
   const candidate = records.find((record) => record.recordId === candidateId) ?? null
@@ -130,6 +137,48 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
       success('Invite copied')
     } catch {
       toastError('Could not copy', 'Select the link and copy it manually.')
+    }
+  }
+
+  function markEmailed(inviteId: string) {
+    setEmailed((current) => {
+      if (current.includes(inviteId)) return current
+      const next = [...current, inviteId]
+      sessionStorage.setItem(`blindscore-emailed:${candidateId}`, JSON.stringify(next))
+      return next
+    })
+  }
+
+  function emailNext() {
+    const next = (shell?.invites ?? []).find((row) => {
+      if (emailed.includes(row.id) || row.status === 'revoked') return false
+      return savedLinks.some((saved) => saved.id === row.id)
+    })
+    const link = savedLinks.find((saved) => saved.id === next?.id)
+    if (!next || !link) {
+      toastError('Nothing left to email', 'Every saved link is already marked sent.')
+      return
+    }
+    markEmailed(next.id)
+    window.location.href = mailtoHref(link.email, room.name, room.role, link.url)
+  }
+
+  async function copyLink(url: string) {
+    try {
+      await navigator.clipboard.writeText(url)
+      success('Invite copied')
+    } catch {
+      toastError('Could not copy', 'Select the link and copy it manually.')
+    }
+  }
+
+  async function shareLink(url: string) {
+    const message = inviteMessage(room.name, room.role, url)
+    try {
+      await navigator.share({ title: message.subject, text: message.body, url })
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      toastError('Could not share', 'Copy the link instead.')
     }
   }
 
@@ -269,6 +318,11 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
         sessionStorage.setItem(`blindscore-links:${candidateId}`, JSON.stringify(links))
         return links
       })
+      setEmailed((current) => {
+        const next = current.filter((id) => id !== inviteId)
+        sessionStorage.setItem(`blindscore-emailed:${candidateId}`, JSON.stringify(next))
+        return next
+      })
       success('New link ready', 'The old one no longer works.')
     } catch (error) {
       toastError('Could not replace the link', explainActionError(error))
@@ -342,14 +396,40 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
         {isManager ? (
           <div className="w-full max-w-md space-y-3">
             <input id="invite-link" data-testid="invite-link" readOnly value={savedLinks[0]?.url ?? ''} className="sr-only" />
+            {(shell?.invites ?? []).some((row) => savedLinks.some((saved) => saved.id === row.id)) ? (
+              <Button type="button" variant="outline" data-testid="email-next" onClick={emailNext}>
+                Email next
+              </Button>
+            ) : null}
             <ul className="space-y-2">
               {(shell?.invites ?? []).map((row) => {
                 const link = savedLinks.find((saved) => saved.id === row.id)
+                const message = link ? inviteMessage(room.name, room.role, link.url) : null
                 return (
                   <li key={row.id} className="rounded-xl border border-border px-3 py-2 text-sm">
                     <p className="font-medium">{row.label}</p>
-                    <p className="text-muted-foreground">{inviteStatus(row)}</p>
+                    <p className="text-muted-foreground">{inviteStatus(row)}{emailed.includes(row.id) ? ' · Emailed' : ''}</p>
                     {link ? <p className="mt-1 break-all text-xs text-muted-foreground">{link.url}</p> : null}
+                    {link && message ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <a
+                          data-testid="invite-email"
+                          className="inline-flex h-8 items-center rounded-lg border border-border px-3 text-xs"
+                          href={mailtoHref(link.email, room.name, room.role, link.url)}
+                          onClick={() => markEmailed(row.id)}
+                        >
+                          Email
+                        </a>
+                        <Button type="button" variant="outline" onClick={() => void copyLink(link.url)}>
+                          Copy
+                        </Button>
+                        {canShare ? (
+                          <Button type="button" variant="outline" onClick={() => void shareLink(link.url)}>
+                            Share
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {!revealed ? (
                       <div className="mt-2 flex gap-2">
                         <Button type="button" variant="outline" disabled={memberBusy === row.id} onClick={() => void resend(row.id)}>

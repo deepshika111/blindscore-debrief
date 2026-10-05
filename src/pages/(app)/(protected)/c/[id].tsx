@@ -7,6 +7,7 @@ import { ScorecardForm } from '@/components/ScorecardForm'
 import { Badge, Button, ConfirmModal, useToast } from '@/components/ui'
 import { callAction, explainActionError } from '@/lib/action'
 import { debriefIcs } from '@/lib/calendar'
+import { dueLabel, nudgeText } from '@/lib/due'
 import { RUBRICS, type Rubric } from '@/lib/rubrics'
 import { inviteMessage, mailtoHref } from '@/lib/invites'
 import type { CandidateData, DebriefData, RevealCard, RevealData, ScorecardData, SubmissionData } from '@/types'
@@ -36,6 +37,8 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const [meetingAt, setMeetingAt] = useState('')
   const [meetingMinutes, setMeetingMinutes] = useState('30')
   const [meetingBusy, setMeetingBusy] = useState(false)
+  const [dueAt, setDueAt] = useState('')
+  const [reminder, setReminder] = useState('')
   const [shellReady, setShellReady] = useState(false)
   const shellTicket = useRef(0)
 
@@ -336,6 +339,48 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
     }
   }
 
+  async function saveDue() {
+    const when = new Date(dueAt)
+    if (Number.isNaN(when.getTime())) {
+      toastError('Could not save the due date', 'Enter a date.')
+      return
+    }
+    setMeetingBusy(true)
+    try {
+      await callAction('setDue', { candidateId, dueAt: when.toISOString() })
+      await refreshShell()
+      success('Due date saved')
+    } catch (error) {
+      toastError('Could not save the due date', explainActionError(error))
+    } finally {
+      setMeetingBusy(false)
+    }
+  }
+
+  async function nudge(inviteId: string) {
+    setMemberBusy(inviteId)
+    try {
+      const result = await callAction<{ email: string; label: string }>('nudge', { candidateId, inviteId })
+      const text = nudgeText(room.name, room.role, `${window.location.origin}/c/${candidateId}`)
+      setReminder(text)
+      if (result.email) {
+        const href = `mailto:${encodeURIComponent(result.email)}?subject=${encodeURIComponent(`Scores due: ${room.name}`)}&body=${encodeURIComponent(text)}`
+        window.location.href = href
+        return
+      }
+      try {
+        await navigator.clipboard.writeText(text)
+      } catch {
+        // The reminder field stays on the page when the clipboard is blocked.
+      }
+      success('Reminder copied')
+    } catch (error) {
+      toastError('Could not nudge', explainActionError(error))
+    } finally {
+      setMemberBusy('')
+    }
+  }
+
   async function saveMeeting() {
     const when = new Date(meetingAt)
     if (Number.isNaN(when.getTime())) {
@@ -481,12 +526,23 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
                         <Button type="button" variant="outline" disabled={memberBusy === row.id} onClick={() => void revoke(row.id)}>
                           Revoke
                         </Button>
+                        {row.status !== 'revoked' ? (
+                          <Button type="button" variant="outline" disabled={memberBusy === row.id} onClick={() => void nudge(row.id)}>
+                            Nudge
+                          </Button>
+                        ) : null}
                       </div>
                     ) : null}
                   </li>
                 )
               })}
             </ul>
+            {reminder ? (
+              <label className="block space-y-1 text-xs text-muted-foreground">
+                Reminder
+                <input data-testid="nudge-text" readOnly value={reminder} className="h-10 w-full rounded-lg border border-border bg-card px-3 text-xs text-foreground" />
+              </label>
+            ) : null}
             {shell?.allowOpenLink ? (
               <div className="space-y-2">
                 <label className="block text-xs text-muted-foreground" htmlFor="open-invite-link">Open link</label>
@@ -500,6 +556,26 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
           </div>
         ) : null}
       </header>
+
+      {shell?.dueAt ? (
+        <p className="mt-4 text-sm text-muted-foreground" data-testid="due-label">{dueLabel(shell.dueAt, Date.now())}</p>
+      ) : null}
+
+      {isManager && !revealed ? (
+        <div className="mt-4 flex flex-wrap items-end gap-2">
+          <label className="block space-y-1 text-xs text-muted-foreground">
+            Scores due
+            <input
+              data-testid="due-at"
+              type="datetime-local"
+              value={dueAt}
+              onChange={(event) => setDueAt(event.target.value)}
+              className="block h-10 rounded-lg border border-border bg-card px-3 text-sm text-foreground"
+            />
+          </label>
+          <Button type="button" disabled={meetingBusy} onClick={() => void saveDue()}>Save due date</Button>
+        </div>
+      ) : null}
 
       {shell?.meetingAt || (isManager && !revealed) ? (
         <section className="mt-6 rounded-xl border border-border px-4 py-3">
@@ -715,6 +791,7 @@ interface RoomShell {
   meetingMinutes?: number
   meetingSequence?: number
   rubric?: Rubric
+  dueAt?: string
   invites?: Array<{ id: string; label: string; email: string; status: string; name: string }>
   cards?: RevealCard[]
   missing?: string[]

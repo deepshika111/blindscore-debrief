@@ -284,6 +284,16 @@ test('sample debrief opens on the split without a second account', async ({ user
   await expect(hm.page.getByTestId('discuss-first')).toContainText('System design')
   await expect(hm.page.getByTestId('discuss-first')).not.toContainText('Communication')
   await expect(hm.page.getByRole('button', { name: 'Retry' })).toHaveCount(0)
+  const candidateId = new URL(hm.page.url()).pathname.split('/').pop() ?? ''
+  await expect(hm.page.getByTestId('decision').or(hm.page.getByRole('button', { name: 'Save decision' }))).toBeVisible({ timeout: 20_000 })
+  if (await hm.page.getByTestId('decision').count() === 0) {
+    await hm.page.getByRole('button', { name: 'Hold', exact: true }).click()
+    await hm.page.getByLabel('Reason').fill('Need one more conversation.')
+    await hm.page.getByRole('button', { name: 'Save decision' }).click()
+  }
+  await expect(hm.page.getByTestId('decision')).toContainText('Hold', { timeout: 20_000 })
+  const again = await postAction(hm.page, 'recordDecision', { candidateId, decision: 'hire', reason: 'Changed our mind.' })
+  expect(again.status).toBe(409)
   await hm.page.goto('/admin/funnel')
   await expect(hm.page.getByRole('heading', { name: 'Activation' })).toBeVisible()
 })

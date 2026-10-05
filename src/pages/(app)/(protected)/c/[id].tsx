@@ -39,6 +39,9 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const [meetingBusy, setMeetingBusy] = useState(false)
   const [dueAt, setDueAt] = useState('')
   const [reminder, setReminder] = useState('')
+  const [decisionChoice, setDecisionChoice] = useState<'hire' | 'no_hire' | 'hold'>('hold')
+  const [decisionReason, setDecisionReason] = useState('')
+  const [decisionBusy, setDecisionBusy] = useState(false)
   const [shellReady, setShellReady] = useState(false)
   const shellTicket = useRef(0)
 
@@ -336,6 +339,19 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
       toastError('Could not replace the link', explainActionError(error))
     } finally {
       setMemberBusy('')
+    }
+  }
+
+  async function saveDecision() {
+    setDecisionBusy(true)
+    try {
+      await callAction('recordDecision', { candidateId, decision: decisionChoice, reason: decisionReason })
+      await refreshShell()
+      success('Decision saved')
+    } catch (error) {
+      toastError('Could not save the decision', explainActionError(error))
+    } finally {
+      setDecisionBusy(false)
     }
   }
 
@@ -676,6 +692,37 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
         </ul>
       ) : null}
 
+      {revealed && shell?.decision ? (
+        <section data-testid="decision" className="mt-6 rounded-2xl border border-border bg-card px-5 py-4">
+          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Decision</p>
+          <p className="font-display mt-1 text-3xl font-semibold">{decisionLabel(shell.decision.decision)}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{shell.decision.reason}</p>
+        </section>
+      ) : null}
+
+      {revealed && isManager && !shell?.decision ? (
+        <section className="mt-6 rounded-2xl border border-border px-5 py-4">
+          <h2 className="text-sm font-medium">Decision</h2>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(['hire', 'no_hire', 'hold'] as const).map((choice) => (
+              <Button key={choice} type="button" variant={decisionChoice === choice ? 'default' : 'outline'} onClick={() => setDecisionChoice(choice)}>
+                {decisionLabel(choice)}
+              </Button>
+            ))}
+          </div>
+          <label className="mt-3 block space-y-1 text-xs text-muted-foreground">
+            Reason
+            <textarea
+              value={decisionReason}
+              maxLength={280}
+              onChange={(event) => setDecisionReason(event.target.value)}
+              className="block min-h-20 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
+            />
+          </label>
+          <Button className="mt-3" type="button" disabled={decisionBusy} onClick={() => void saveDecision()}>Save decision</Button>
+        </section>
+      ) : null}
+
       <p className="mt-6 text-sm text-muted-foreground" data-testid="submission-progress">
         {submitted} / {data.expectedPanelSize} submitted
       </p>
@@ -781,6 +828,12 @@ interface SavedLink {
   url: string
 }
 
+function decisionLabel(value: string): string {
+  if (value === 'hire') return 'Hire'
+  if (value === 'no_hire') return 'No hire'
+  return 'Hold'
+}
+
 function inviteStatus(row: { status: string; name: string }): string {
   if (row.status === 'revoked') return 'Revoked'
   if (row.status === 'claimed') return `Joined as ${row.name || 'panelist'}`
@@ -814,6 +867,7 @@ interface RoomShell {
   meetingSequence?: number
   rubric?: Rubric
   dueAt?: string
+  decision?: { decision: string; reason: string } | null
   invites?: Array<{ id: string; label: string; email: string; status: string; name: string }>
   cards?: RevealCard[]
   missing?: string[]

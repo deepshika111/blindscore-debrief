@@ -1,0 +1,14 @@
+---
+description: BlindScore standing rules
+alwaysApply: true
+---
+
+# BlindScore
+
+- Read `.agents/skills/deepspace/SKILL.md` before writing DeepSpace code. Never invent SDK APIs.
+- Clients NEVER write BlindScore collections. All writes go through `src/actions/index.ts`.
+- Never put scores in `candidates`, `submissions`, or `debriefs`. Scores live only in `scorecards` and `reveals`.
+- Never return raw records from actions. Return ids and flags.
+- Identity comes only from `ctx.userId`.
+- No API keys, secrets, or new dependencies without asking.
+- Small diffs. Strict TypeScript. No `any` in final code.

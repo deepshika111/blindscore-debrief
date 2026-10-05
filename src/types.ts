@@ -22,6 +22,9 @@ export interface CandidateData {
   panelNames: Record<string, string>
   inviteCode: string
   revealRequests?: string[]
+  pendingPanel?: string[]
+  pendingNames?: Record<string, string>
+  isDemo?: boolean | number
 }
 
 export interface ScorecardData {
@@ -78,6 +81,7 @@ export interface DebriefData {
   summary?: DebriefSummary
   model?: string
   error?: string
+  attempts?: number
 }
 
 export const REC_LABEL: Record<Recommendation, string> = {

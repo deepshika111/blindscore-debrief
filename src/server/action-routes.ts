@@ -58,6 +58,23 @@ export function registerActionRoutes(app: Hono<AppContext>, resolveAuth: Resolve
     const params = await c.req.json<Record<string, unknown>>()
     const tools = createActionTools(c.env, auth.userId, callerJwt)
     const result = await action({ userId: auth.userId, params, tools, env: c.env, callerJwt })
+    if (!result.success && result.error === 'forbidden') {
+      return c.json({ success: false, error: result.error, message: 'Forbidden' }, 403)
+    }
+    if (!result.success && result.error === 'not_found') {
+      return c.json({ success: false, error: result.error, message: 'Room not found' }, 404)
+    }
+    if (!result.success && (result.error === 'already_revealed' || result.error === 'leave_blocked' || result.error === 'remove_blocked')) {
+      const message = result.error === 'leave_blocked'
+        ? 'You can leave only before the room is revealed, and only if you have not submitted.'
+        : result.error === 'remove_blocked'
+          ? 'You can remove a panel member only before the room is revealed, and only if they have not submitted.'
+          : 'Room already revealed'
+      return c.json({ success: false, error: result.error, message }, 409)
+    }
+    if (!result.success && result.error === 'rate_limited') {
+      return c.json({ success: false, error: result.error, message: 'Too many requests' }, 429)
+    }
     return c.json(result as unknown as Record<string, unknown>)
   })
 }

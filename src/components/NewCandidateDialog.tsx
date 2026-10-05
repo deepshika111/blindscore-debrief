@@ -56,11 +56,11 @@ export function NewCandidateDialog({
         <div className="space-y-4">
           <label className="block space-y-1.5">
             <Label htmlFor="candidate-name">Candidate</Label>
-            <Input id="candidate-name" value={name} maxLength={120} onChange={(event) => setName(event.target.value)} placeholder="Rin Patel" />
+            <Input id="candidate-name" value={name} maxLength={60} onChange={(event) => setName(event.target.value)} placeholder="Rin Patel" />
           </label>
           <label className="block space-y-1.5">
             <Label htmlFor="candidate-role">Role</Label>
-            <Input id="candidate-role" value={role} maxLength={120} onChange={(event) => setRole(event.target.value)} placeholder="Backend engineer" />
+            <Input id="candidate-role" value={role} maxLength={80} onChange={(event) => setRole(event.target.value)} placeholder="Backend engineer" />
           </label>
           <label className="block space-y-1.5">
             <Label htmlFor="panel-size">Panel size</Label>

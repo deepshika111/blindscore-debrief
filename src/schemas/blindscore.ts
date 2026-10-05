@@ -1,7 +1,10 @@
 /**
- * Five collections. Clients can read some of them and write none of them.
- * Scores live in exactly two places: author-only `scorecards`, and the
- * single `reveals` row created when the room opens.
+ * Score collections stay at five. Clients can read some of them and write
+ * none of them. Scores live in exactly two places: author-only `scorecards`,
+ * and the single `reveals` row created when the room opens.
+ *
+ * `events` is a sixth collection used only for activation counts.
+ * Members cannot read it. The owner report is an action.
  *
  * Anonymous sockets use the `*` role. With no entry, the DO already denies
  * them; the explicit rule makes that visible in the schema.
@@ -41,11 +44,14 @@ export const candidatesSchema: CollectionSchema = {
     json('panelNames'),
     text('inviteCode', true),
     json('revealRequests'),
+    json('pendingPanel'),
+    json('pendingNames'),
     {
       name: 'forceRevealAllowed',
       storage: 'text',
       interpretation: { kind: 'select', options: ['no', 'yes'] },
     },
+    { name: 'isDemo', storage: 'number', interpretation: { kind: 'boolean' } },
   ],
   collaboratorsField: 'panel',
   permissions: panelOnly,
@@ -89,6 +95,9 @@ export const revealsSchema: CollectionSchema = {
       storage: 'text',
       interpretation: { kind: 'select', options: ['auto', 'forced'] },
     },
+    // A second reveal of the same candidate id must fail closed. records.create
+    // upserts, so this value is written once and never replaced.
+    { name: 'seal', storage: 'text', interpretation: 'plain', immutable: true },
   ],
   collaboratorsField: 'panel',
   permissions: panelOnly,
@@ -108,9 +117,31 @@ export const debriefsSchema: CollectionSchema = {
     json('summary'),
     text('model'),
     text('error'),
+    { name: 'attempts', storage: 'number', interpretation: 'plain' },
   ],
   collaboratorsField: 'panel',
   permissions: panelOnly,
+}
+
+const adminRead = { '*': noAccess, member: noAccess, admin: { read: true, create: false, update: false, delete: false } }
+
+export const eventsSchema: CollectionSchema = {
+  name: 'events',
+  columns: [
+    {
+      name: 'name',
+      storage: 'text',
+      required: true,
+      interpretation: {
+        kind: 'select',
+        options: ['room_created', 'invite_opened', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened'],
+      },
+    },
+    text('userId', true),
+    text('candidateId', true),
+    { name: 'at', storage: 'text', interpretation: { kind: 'datetime' }, required: true },
+  ],
+  permissions: adminRead,
 }
 
 export const blindscoreSchemas = [
@@ -119,4 +150,5 @@ export const blindscoreSchemas = [
   submissionsSchema,
   revealsSchema,
   debriefsSchema,
+  eventsSchema,
 ]

@@ -1,0 +1,13 @@
+BlindScore is a hiring room. Interviewers score a candidate without seeing each other. This walkthrough is the payoff, in one sitting.
+
+Start on the dashboard. Instead of recruiting two other accounts, open Try a sample debrief. Three scorecards are already in, and the room is already revealed.
+
+The panel did not agree. Technical and system design split by two points or more, so those metrics sit at the top, under Discuss first. Communication stays off that list, because the panel was closer there.
+
+Each circle is one metric. The center is the number of scorecards, three. The ring splits the largest group that shared one score from everyone else. Overall, the votes are mixed. Yes and no are both on the table, and the room does not pretend they were not.
+
+The written debrief stays off the numbers. It does not say hire or no hire. It names the open question, and two things the panel should ask next.
+
+In a real room, none of this is visible until reveal. A scorecard stays sealed. An outsider who opens the room link sees nothing. A panel member cannot delete everyone else's cards. Someone who arrives with the invite waits until the hiring manager approves them.
+
+The Activation page counts rooms that reached each step: created, invite opened, joined, first scorecard, reveal, and debrief viewed. That is the path from attention to activation. The counts are logged events. They are not a guess about why someone stopped.

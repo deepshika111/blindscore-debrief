@@ -36,6 +36,8 @@ test('record the hiring-manager, interviewer, and outsider screens', async ({ br
   await interviewer.page.goto(invite)
   await interviewer.page.getByLabel('Name on the panel').fill('Interviewer')
   await interviewer.page.getByTestId('join-panel').click()
+  await expect(hm.page.getByRole('button', { name: 'Approve Interviewer' })).toBeVisible({ timeout: 20_000 })
+  await hm.page.getByRole('button', { name: 'Approve Interviewer' }).click()
   await expect(interviewer.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
   await interviewer.page.waitForTimeout(800)
 

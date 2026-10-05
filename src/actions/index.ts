@@ -1,14 +1,32 @@
+/**
+ * Verified email: no. `resolveAuth` checks the JWT, and the action context
+ * only receives `userId`. `JwtClaims` may include an optional email, but it
+ * has no verified flag, the users collection stores email without one, and
+ * that address is not passed into the action. Invites are approve/deny.
+ *
+ * Create-if-absent: no. `records.create` updates a row when the id already
+ * exists. The reveal row uses an immutable seal so a second writer is
+ * rejected, reads the existing snapshot, and does not replace it.
+ */
+
 import { generateText } from 'ai'
 import { z } from 'zod'
 import type { ActionHandler, ActionResult, ActionTools } from 'deepspace/worker'
 import { createDeepSpaceAI } from 'deepspace/worker'
 import type { Env } from '../../worker'
+import { chargeRate } from '../server/rate-limit'
 import { computeStats } from '../lib/stats'
 import type { Recommendation, RevealCard } from '../types'
 import { RECS } from '../types'
 
 const DIMS = ['technical', 'systemDesign', 'communication'] as const
 const fail = (error: string): ActionResult<never> => ({ success: false, error })
+const nameText = z.string().trim().min(1).max(60)
+const roleText = z.string().trim().min(1).max(80)
+const noteText = z.string().trim().min(1).max(1000)
+const DEBRIEF_ATTEMPTS = 3
+const FUNNEL = ['room_created', 'invite_opened', 'panel_joined', 'scorecard_submitted', 'room_revealed', 'debrief_viewed', 'demo_opened'] as const
+type FunnelEvent = (typeof FUNNEL)[number]
 
 function asRecord(value: object): Record<string, unknown> {
   return value as Record<string, unknown>
@@ -40,6 +58,9 @@ interface CandidateRow {
   inviteCode: string
   forceRevealAllowed: boolean
   revealRequests: string[]
+  pendingPanel: string[]
+  pendingNames: Record<string, string>
+  isDemo: boolean
 }
 
 function strings(value: unknown): string[] {
@@ -60,8 +81,9 @@ function isScore(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 4
 }
 
-function isNote(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0 && value.length <= 2000
+function readNote(value: unknown): string | null {
+  const parsed = noteText.safeParse(value)
+  return parsed.success ? parsed.data : null
 }
 
 function isRec(value: unknown): value is Rec {
@@ -87,6 +109,9 @@ function readCandidate(record: { recordId: string; updatedAt: string; data: Reco
     inviteCode: data.inviteCode,
     forceRevealAllowed: data.forceRevealAllowed === 'yes',
     revealRequests: strings(data.revealRequests),
+    pendingPanel: strings(data.pendingPanel),
+    pendingNames: namesOf(data.pendingNames),
+    isDemo: data.isDemo === true || data.isDemo === 1,
   }
 }
 
@@ -104,11 +129,10 @@ async function callerName(tools: Tools, userId: string): Promise<string> {
   return typeof name === 'string' && name.trim() ? name.trim() : 'Interviewer'
 }
 
-function cap(value: unknown, code: string): ActionResult<string> | string {
-  if (typeof value !== 'string') return fail(code)
-  const trimmed = value.trim()
-  if (!trimmed) return fail(code)
-  return trimmed.slice(0, 120)
+function cap(value: unknown, code: string, field: z.ZodString = nameText): ActionResult<string> | string {
+  const parsed = field.safeParse(value)
+  if (!parsed.success) return fail(code)
+  return parsed.data
 }
 
 function escapeXml(value: string): string {
@@ -209,13 +233,100 @@ async function syncSubmissionPanels(tools: Tools, candidateId: string, panel: st
   return { success: true, data: {} }
 }
 
-async function reveal(
+async function repairRevealed(tools: Tools, cand: CandidateRow): Promise<void> {
+  if (cand.status === 'revealed') return
+  const updated = await tools.update('candidates', cand.recordId, { status: 'revealed' })
+  if (updated.success) cand.status = 'revealed'
+}
+
+async function logEvent(tools: Tools, cand: CandidateRow, name: FunnelEvent, userId: string): Promise<void> {
+  if (cand.isDemo && name !== 'demo_opened') return
+  const recordId = name === 'scorecard_submitted' ? `${cand.recordId}:${name}:${userId}` : `${cand.recordId}:${name}`
+  const existing = await tools.get('events', recordId)
+  if (existing.success) return
+  await tools.create('events', asRecord({
+    name,
+    userId,
+    candidateId: cand.recordId,
+    at: new Date().toISOString(),
+  }), recordId)
+}
+
+function gateManager(cand: CandidateRow, userId: string): ActionResult<never> | null {
+  if (cand.hiringManagerId === userId) return null
+  return fail(cand.panel.includes(userId) ? 'forbidden' : 'not_found')
+}
+
+function ownScorecard(
+  records: Array<{ data: Record<string, unknown> }>,
+  userId: string,
+): { scores: { technical: number; systemDesign: number; communication: number }; recommendation: Rec; strengths: string; concerns: string } | null {
+  const mine = records.find((row) => row.data.interviewerId === userId)
+  if (!mine || !isRec(mine.data.recommendation)) return null
+  const scores = mine.data.scores
+  if (!scores || typeof scores !== 'object' || Array.isArray(scores)) return null
+  const numeric = scores as Record<string, unknown>
+  if (!DIMS.every((dim) => isScore(numeric[dim]))) return null
+  return {
+    scores: {
+      technical: numeric.technical as number,
+      systemDesign: numeric.systemDesign as number,
+      communication: numeric.communication as number,
+    },
+    recommendation: mine.data.recommendation,
+    strengths: typeof mine.data.strengths === 'string' ? mine.data.strengths : '',
+    concerns: typeof mine.data.concerns === 'string' ? mine.data.concerns : '',
+  }
+}
+
+function withoutId(names: Record<string, string>, userId: string): Record<string, string> {
+  const next = { ...names }
+  delete next[userId]
+  return next
+}
+
+async function dropMember(tools: Tools, cand: CandidateRow, memberId: string, eraseCards: boolean): Promise<ActionResult<unknown>> {
+  const panel = cand.panel.filter((id) => id !== memberId)
+  const updated = await tools.update('candidates', cand.recordId, asRecord({
+    panel,
+    panelNames: withoutId(cand.panelNames, memberId),
+    pendingPanel: cand.pendingPanel.filter((id) => id !== memberId),
+    pendingNames: withoutId(cand.pendingNames, memberId),
+    revealRequests: cand.revealRequests.filter((id) => id !== memberId),
+  }))
+  if (!updated.success) return updated
+  if (eraseCards) {
+    const cards = await tools.query('scorecards', { where: { candidateId: cand.recordId }, limit: 20 })
+    if (!cards.success) return cards
+    for (const row of cards.data.records) {
+      if (row.data.interviewerId !== memberId) continue
+      const gone = await tools.remove('scorecards', row.recordId)
+      if (!gone.success) return gone
+    }
+    const subs = await tools.query('submissions', { where: { candidateId: cand.recordId }, limit: 20 })
+    if (!subs.success) return subs
+    for (const row of subs.data.records) {
+      if (row.data.interviewerId !== memberId) continue
+      const gone = await tools.remove('submissions', row.recordId)
+      if (!gone.success) return gone
+    }
+  }
+  return syncSubmissionPanels(tools, cand.recordId, panel)
+}
+
+async function revealRoom(
   tools: Tools,
   cand: CandidateRow,
   by: string,
   reason: 'auto' | 'forced',
 ): Promise<ActionResult<unknown>> {
   const id = cand.recordId
+  const existing = await tools.get('reveals', id)
+  if (existing.success) {
+    await repairRevealed(tools, cand)
+    return openedRoom(tools, cand)
+  }
+
   const queried = await tools.query('scorecards', { where: { candidateId: id }, limit: 20 })
   if (!queried.success) return queried
 
@@ -252,16 +363,21 @@ async function reveal(
       missing,
       revealedBy: by,
       reason,
+      seal: crypto.randomUUID(),
     }),
     id,
   )
-  if (!made.success) return made
-  const opened = await tools.update('candidates', id, { status: 'revealed' })
-  if (!opened.success) return opened
-  return {
-    success: true,
-    data: { cards, missing, reason, panelNames: cand.panelNames },
+  if (!made.success) {
+    const raced = await tools.get('reveals', id)
+    if (raced.success) {
+      await repairRevealed(tools, cand)
+      return openedRoom(tools, cand)
+    }
+    return made
   }
+  await repairRevealed(tools, cand)
+  await logEvent(tools, cand, 'room_revealed', by)
+  return openedRoom(tools, cand)
 }
 
 async function openedRoom(tools: Tools, cand: CandidateRow): Promise<ActionResult<unknown>> {
@@ -302,11 +418,32 @@ ${notes}
 For each dimension with level "high", explain the disagreement using the notes and write one question that would resolve it.`
 }
 
+function sampleCard(
+  interviewerId: string,
+  name: string,
+  technical: number,
+  systemDesign: number,
+  communication: number,
+  recommendation: Rec,
+  strengths: string,
+  concerns: string,
+): RevealCard {
+  return {
+    interviewerId,
+    name,
+    scores: { technical, systemDesign, communication },
+    recommendation,
+    strengths,
+    concerns,
+  }
+}
+
 export const actions: Record<string, ActionHandler<Env>> = {
-  createCandidate: async ({ userId, params, tools }) => {
+  createCandidate: async ({ userId, params, tools, env }) => {
+    if (!(await chargeRate(env, `create:${userId}`, 20, 60 * 60 * 1000))) return fail('rate_limited')
     const name = cap(params.name, 'bad_name')
     if (typeof name !== 'string') return name
-    const role = cap(params.role, 'bad_role')
+    const role = cap(params.role, 'bad_role', roleText)
     if (typeof role !== 'string') return role
     const size = params.expectedPanelSize
     if (typeof size !== 'number' || !Number.isInteger(size) || size < 2 || size > 6) return fail('bad_size')
@@ -323,86 +460,206 @@ export const actions: Record<string, ActionHandler<Env>> = {
       inviteCode,
       forceRevealAllowed: 'no',
       revealRequests: [],
+      pendingPanel: [],
+      pendingNames: {},
+      isDemo: false,
     }))
     if (!created.success) return created
+    const cand = await loadCandidate(tools, created.data.recordId)
+    if (cand) await logEvent(tools, cand, 'room_created', userId)
     return { success: true, data: { candidateId: created.data.recordId, inviteCode } }
   },
 
-  inviteNotice: async ({ params, tools }) => {
+  inviteNotice: async ({ userId, params, tools }) => {
     const cand = await loadCandidate(tools, params.candidateId)
     if (!cand) return fail('not_found')
     if (typeof params.inviteCode !== 'string' || params.inviteCode !== cand.inviteCode) return fail('bad_code')
+    await logEvent(tools, cand, 'invite_opened', userId)
     return { success: true, data: { name: cand.name, role: cand.role } }
   },
 
   roomShell: async ({ userId, params, tools }) => {
     const cand = await loadCandidate(tools, params.candidateId)
     if (!cand) return fail('not_found')
-    if (!cand.panel.includes(userId)) return fail('forbidden')
+    if (!cand.panel.includes(userId)) return fail('not_found')
+    const rv = await tools.get('reveals', cand.recordId)
+    if (rv.success) await repairRevealed(tools, cand)
     const subs = await tools.query('submissions', { where: { candidateId: cand.recordId }, limit: 20 })
     const records = subs.success ? subs.data.records : []
+    const isManager = cand.hiringManagerId === userId
+    const submittedNames = records.map((row) => {
+      const interviewerId = typeof row.data.interviewerId === 'string' ? row.data.interviewerId : ''
+      return cand.panelNames[interviewerId] || 'Interviewer'
+    })
     const shell = {
       name: cand.name,
       role: cand.role,
-      status: cand.status,
+      status: rv.success ? 'revealed' as const : cand.status,
       expectedPanelSize: cand.expectedPanelSize,
-      inviteCode: cand.hiringManagerId === userId ? cand.inviteCode : '',
-      isManager: cand.hiringManagerId === userId,
+      inviteCode: isManager ? cand.inviteCode : '',
+      isManager,
       forceRevealAllowed: cand.forceRevealAllowed,
       submitted: subs.success ? subs.data.count : records.length,
+      submittedNames,
       mine: records.some((row) => row.data.interviewerId === userId),
       panelNames: cand.panelNames,
       revealRequestNames: cand.revealRequests.map((id) => cand.panelNames[id] || 'An interviewer'),
+      ...(isManager
+        ? {
+            pending: cand.pendingPanel.map((id) => ({ userId: id, name: cand.pendingNames[id] || 'Someone' })),
+            roster: cand.panel
+              .filter((id) => id !== userId)
+              .map((id) => ({
+                userId: id,
+                name: cand.panelNames[id] || 'Interviewer',
+                submitted: records.some((row) => row.data.interviewerId === id),
+              })),
+          }
+        : {}),
     }
-    if (cand.status !== 'revealed') return { success: true, data: shell }
+    if (!rv.success && cand.status !== 'revealed') {
+      const cards = await tools.query('scorecards', { where: { candidateId: cand.recordId }, limit: 20 })
+      const ownCard = cards.success ? ownScorecard(cards.data.records, userId) : null
+      return { success: true, data: ownCard ? { ...shell, ownCard } : shell }
+    }
     const opened = await openedRoom(tools, cand)
     if (!opened.success) return opened
-    return { success: true, data: { ...shell, ...(opened.data as object) } }
+    return { success: true, data: { ...shell, status: 'revealed' as const, ...(opened.data as object) } }
   },
 
-  joinPanel: async ({ userId, params, tools }) => {
+  joinPanel: async ({ userId, params, tools, env }) => {
     const cand = await loadCandidate(tools, params.candidateId)
     if (!cand) return fail('not_found')
     if (typeof params.inviteCode !== 'string' || params.inviteCode !== cand.inviteCode) return fail('bad_code')
     const name = await chosenName(tools, userId, params.displayName)
     if (typeof name !== 'string') return name
-    if (cand.status !== 'scoring') {
-      if (!cand.panel.includes(userId)) return fail('already_revealed')
-      return rememberName(tools, cand, userId, name)
-    }
     if (cand.panel.includes(userId)) {
+      if (cand.status !== 'scoring') return rememberName(tools, cand, userId, name)
       const named = await rememberName(tools, cand, userId, name)
       if (!named.success) return named
       const synced = await syncSubmissionPanels(tools, cand.recordId, cand.panel)
       if (!synced.success) return synced
-      return { success: true, data: { joined: true } }
+      return { success: true, data: { joined: true, pending: false } }
     }
-    if (cand.panel.length >= cand.expectedPanelSize) return fail('panel_full')
+    if (cand.status !== 'scoring') return fail('already_revealed')
+    if (cand.pendingPanel.includes(userId)) {
+      const updated = await tools.update('candidates', cand.recordId, asRecord({
+        pendingNames: { ...cand.pendingNames, [userId]: name },
+      }))
+      if (!updated.success) return updated
+      return { success: true, data: { joined: false, pending: true } }
+    }
+    if (cand.panel.length >= cand.expectedPanelSize || cand.pendingPanel.length >= 8) return fail('panel_full')
+    if (!(await chargeRate(env, `join:${userId}`, 10, 60 * 1000))) return fail('rate_limited')
 
-    const panel = [...cand.panel, userId]
-    const panelNames = { ...cand.panelNames, [userId]: name }
-    const updated = await tools.update('candidates', cand.recordId, asRecord({ panel, panelNames }))
+    const updated = await tools.update('candidates', cand.recordId, asRecord({
+      pendingPanel: [...cand.pendingPanel, userId],
+      pendingNames: { ...cand.pendingNames, [userId]: name },
+    }))
     if (!updated.success) return updated
+    return { success: true, data: { joined: false, pending: true } }
+  },
 
-    // Collaborator checks the panel array on each row. Rewrite earlier
-    // submission rows so a late joiner can see progress after they reload.
+  approveJoin: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    if (cand.status !== 'scoring') return fail('already_revealed')
+    const memberId = typeof params.userId === 'string' ? params.userId : ''
+    if (!memberId || !cand.pendingPanel.includes(memberId)) return fail('not_found')
+    if (cand.panel.length >= cand.expectedPanelSize) return fail('panel_full')
+    const panel = [...cand.panel, memberId]
+    const updated = await tools.update('candidates', cand.recordId, asRecord({
+      panel,
+      panelNames: { ...cand.panelNames, [memberId]: cand.pendingNames[memberId] || 'Interviewer' },
+      pendingPanel: cand.pendingPanel.filter((id) => id !== memberId),
+      pendingNames: withoutId(cand.pendingNames, memberId),
+    }))
+    if (!updated.success) return updated
     const synced = await syncSubmissionPanels(tools, cand.recordId, panel)
     if (!synced.success) return synced
-    return { success: true, data: { joined: true } }
+    await logEvent(tools, cand, 'panel_joined', memberId)
+    return { success: true, data: { approved: true } }
+  },
+
+  denyJoin: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    const memberId = typeof params.userId === 'string' ? params.userId : ''
+    if (!memberId || !cand.pendingPanel.includes(memberId)) return fail('not_found')
+    const updated = await tools.update('candidates', cand.recordId, asRecord({
+      pendingPanel: cand.pendingPanel.filter((id) => id !== memberId),
+      pendingNames: withoutId(cand.pendingNames, memberId),
+    }))
+    if (!updated.success) return updated
+    return { success: true, data: { denied: true } }
+  },
+
+  rotateInvite: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    const inviteCode = crypto.randomUUID()
+    const updated = await tools.update('candidates', cand.recordId, { inviteCode })
+    if (!updated.success) return updated
+    return { success: true, data: { inviteCode } }
+  },
+
+  removeMember: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
+    if (cand.status !== 'scoring') return fail('remove_blocked')
+    const memberId = typeof params.userId === 'string' ? params.userId : ''
+    if (!memberId || memberId === userId || !cand.panel.includes(memberId)) return fail('not_found')
+    const subs = await tools.query('submissions', { where: { candidateId: cand.recordId }, limit: 20 })
+    if (!subs.success) return subs
+    if (subs.data.records.some((row) => row.data.interviewerId === memberId)) return fail('remove_blocked')
+    const dropped = await dropMember(tools, cand, memberId, true)
+    if (!dropped.success) return dropped
+    return { success: true, data: { removed: true } }
+  },
+
+  leaveRoom: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    if (!cand.panel.includes(userId)) return fail('not_found')
+    if (cand.hiringManagerId === userId) return fail('forbidden')
+    const subs = await tools.query('submissions', { where: { candidateId: cand.recordId }, limit: 20 })
+    if (!subs.success) return subs
+    const cards = await tools.query('scorecards', { where: { candidateId: cand.recordId }, limit: 20 })
+    if (!cards.success) return cards
+    const submitted = subs.data.records.some((row) => row.data.interviewerId === userId)
+      || cards.data.records.some((row) => row.data.interviewerId === userId)
+    if (cand.status !== 'scoring' || submitted) return fail('leave_blocked')
+    const dropped = await dropMember(tools, cand, userId, false)
+    if (!dropped.success) return dropped
+    return { success: true, data: { left: true } }
   },
 
   submitScorecard: async ({ userId, params, tools }) => {
     const cand = await loadCandidate(tools, params.candidateId)
     if (!cand) return fail('not_found')
-    if (!cand.panel.includes(userId)) return fail('forbidden')
-    if (cand.status !== 'scoring') return fail('already_revealed')
+    if (!cand.panel.includes(userId)) return fail('not_found')
+    const sealed = await tools.get('reveals', cand.recordId)
+    if (sealed.success || cand.status !== 'scoring') {
+      if (sealed.success) await repairRevealed(tools, cand)
+      return fail('already_revealed')
+    }
 
     const raw = params.scores
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('bad_scores')
     const scores = raw as Record<string, unknown>
     if (!DIMS.every((dim) => isScore(scores[dim]))) return fail('bad_scores')
     if (!isRec(params.recommendation)) return fail('bad_rec')
-    if (!isNote(params.strengths) || !isNote(params.concerns)) return fail('bad_notes')
+    const strengths = readNote(params.strengths)
+    const concerns = readNote(params.concerns)
+    if (!strengths || !concerns) return fail('bad_notes')
 
     const card = await tools.create('scorecards', asRecord({
       candidateId: cand.recordId,
@@ -413,8 +670,8 @@ export const actions: Record<string, ActionHandler<Env>> = {
         communication: scores.communication,
       },
       recommendation: params.recommendation,
-      strengths: params.strengths,
-      concerns: params.concerns,
+      strengths,
+      concerns,
     }))
     if (!card.success) {
       return card.error.startsWith('Duplicate') ? fail('already_submitted') : card
@@ -428,8 +685,9 @@ export const actions: Record<string, ActionHandler<Env>> = {
     if (!submission.success && !submission.error.startsWith('Duplicate')) return submission
 
     const subs = await tools.query('submissions', { where: { candidateId: cand.recordId }, limit: 20 })
+    if (subs.success) await logEvent(tools, cand, 'scorecard_submitted', userId)
     if (subs.success && subs.data.count >= cand.expectedPanelSize) {
-      const opened = await reveal(tools, cand, userId, 'auto')
+      const opened = await revealRoom(tools, cand, userId, 'auto')
       if (!opened.success) return opened
     }
     return { success: true, data: { submitted: true } }
@@ -446,7 +704,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
       const name = typeof row.data.name === 'string' ? row.data.name : 'Candidate'
       managed.set(row.recordId, { name, panelNames: namesOf(row.data.panelNames) })
     }
-    const notices: Array<{ id: string; kind: 'submitted' | 'reveal'; candidateId: string; candidateName: string; name: string }> = []
+    const notices: Array<{ id: string; kind: 'submitted' | 'reveal' | 'join'; candidateId: string; candidateName: string; name: string; userId: string }> = []
     for (const row of submissions.data.records) {
       const candidateId = typeof row.data.candidateId === 'string' ? row.data.candidateId : ''
       const interviewerId = typeof row.data.interviewerId === 'string' ? row.data.interviewerId : ''
@@ -458,12 +716,12 @@ export const actions: Record<string, ActionHandler<Env>> = {
         candidateId,
         candidateName: cand.name,
         name: cand.panelNames[interviewerId] || 'An interviewer',
+        userId: interviewerId,
       })
     }
     for (const [candidateId, cand] of managed) {
-      const requests = strings(
-        candidates.data.records.find((row) => row.recordId === candidateId)?.data.revealRequests,
-      )
+      const row = candidates.data.records.find((entry) => entry.recordId === candidateId)
+      const requests = strings(row?.data.revealRequests)
       for (const interviewerId of requests) {
         notices.push({
           id: `${candidateId}:reveal:${interviewerId}`,
@@ -471,6 +729,18 @@ export const actions: Record<string, ActionHandler<Env>> = {
           candidateId,
           candidateName: cand.name,
           name: cand.panelNames[interviewerId] || 'An interviewer',
+          userId: interviewerId,
+        })
+      }
+      const pendingNames = namesOf(row?.data.pendingNames)
+      for (const interviewerId of strings(row?.data.pendingPanel)) {
+        notices.push({
+          id: `${candidateId}:join:${interviewerId}`,
+          kind: 'join',
+          candidateId,
+          candidateName: cand.name,
+          name: pendingNames[interviewerId] || 'Someone',
+          userId: interviewerId,
         })
       }
     }
@@ -480,7 +750,8 @@ export const actions: Record<string, ActionHandler<Env>> = {
   requestForceReveal: async ({ userId, params, tools }) => {
     const cand = await loadCandidate(tools, params.candidateId)
     if (!cand) return fail('not_found')
-    if (!cand.panel.includes(userId) || cand.hiringManagerId === userId) return fail('forbidden')
+    if (!cand.panel.includes(userId)) return fail('not_found')
+    if (cand.hiringManagerId === userId) return fail('forbidden')
     if (cand.status !== 'scoring') return fail('already_revealed')
     if (cand.forceRevealAllowed) return { success: true, data: { requested: false } }
     if (cand.revealRequests.includes(userId)) return { success: true, data: { requested: true } }
@@ -492,7 +763,8 @@ export const actions: Record<string, ActionHandler<Env>> = {
   allowForceReveal: async ({ userId, params, tools }) => {
     const cand = await loadCandidate(tools, params.candidateId)
     if (!cand) return fail('not_found')
-    if (cand.hiringManagerId !== userId) return fail('forbidden')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
     if (cand.forceRevealAllowed) return { success: true, data: { allowed: true } }
     const updated = await tools.update('candidates', cand.recordId, asRecord({ forceRevealAllowed: 'yes' }))
     if (!updated.success) return updated
@@ -502,18 +774,23 @@ export const actions: Record<string, ActionHandler<Env>> = {
   forceReveal: async ({ userId, params, tools }) => {
     const cand = await loadCandidate(tools, params.candidateId)
     if (!cand) return fail('not_found')
-    if (!cand.panel.includes(userId)) return fail('forbidden')
+    if (!cand.panel.includes(userId)) return fail('not_found')
+    const rv = await tools.get('reveals', cand.recordId)
+    if (rv.success || cand.status === 'revealed') {
+      if (rv.success) await repairRevealed(tools, cand)
+      return openedRoom(tools, cand)
+    }
     if (cand.hiringManagerId !== userId && !cand.forceRevealAllowed) return fail('reveal_not_allowed')
-    if (cand.status === 'revealed') return openedRoom(tools, cand)
     const subs = await tools.query('submissions', { where: { candidateId: cand.recordId }, limit: 20 })
     if (!subs.success || subs.data.count === 0) return fail('no_submissions')
-    return reveal(tools, cand, userId, 'forced')
+    return revealRoom(tools, cand, userId, 'forced')
   },
 
   deleteCandidate: async ({ userId, params, tools }) => {
     const cand = await loadCandidate(tools, params.candidateId)
     if (!cand) return fail('not_found')
-    if (cand.hiringManagerId !== userId && !cand.panel.includes(userId)) return fail('forbidden')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
     const id = cand.recordId
     const cards = await tools.deleteWhere('scorecards', { candidateId: id }, 20)
     if (!cards.success) return cards
@@ -530,13 +807,18 @@ export const actions: Record<string, ActionHandler<Env>> = {
 
   generateDebrief: async ({ userId, params, tools, env }) => {
     const candidateId = typeof params.candidateId === 'string' ? params.candidateId : ''
+    const cand = await loadCandidate(tools, candidateId)
+    if (!cand) return fail('not_found')
+    const gated = gateManager(cand, userId)
+    if (gated) return gated
     const rv = await tools.get('reveals', candidateId)
     if (!rv.success) return fail('not_revealed')
     const revealRow = rv.data.record
     const panel = strings(revealRow.data.panel)
-    if (!panel.includes(userId)) return fail('forbidden')
+    if (!panel.includes(userId)) return fail('not_found')
 
     const prev = await tools.get('debriefs', revealRow.recordId)
+    let attempts = 0
     if (prev.success) {
       const existing = prev.data.record
       const fresh = Date.now() - Date.parse(existing.updatedAt) < 120_000
@@ -544,11 +826,14 @@ export const actions: Record<string, ActionHandler<Env>> = {
       if (status === 'ready' || (status === 'pending' && fresh)) {
         return { success: true, data: { status } }
       }
+      attempts = typeof existing.data.attempts === 'number' ? existing.data.attempts : 0
+      if (attempts >= DEBRIEF_ATTEMPTS) return fail('retry_cap')
     }
+    if (!(await chargeRate(env, `debrief:${candidateId}`, 3, 60 * 60 * 1000))) return fail('rate_limited')
 
     const cards = readCards(revealRow.data.cards)
     const stats = computeStats(cards)
-    const base = { candidateId: revealRow.recordId, panel, stats }
+    const base = { candidateId: revealRow.recordId, panel, stats, attempts: attempts + 1 }
     const pending = await tools.create('debriefs', asRecord({ ...base, status: 'pending' }), revealRow.recordId)
     if (!pending.success) return pending
 
@@ -577,5 +862,147 @@ export const actions: Record<string, ActionHandler<Env>> = {
       )
       return fail('ai_failed')
     }
+  },
+
+  markDebriefViewed: async ({ userId, params, tools }) => {
+    const cand = await loadCandidate(tools, params.candidateId)
+    if (!cand) return fail('not_found')
+    if (!cand.panel.includes(userId)) return fail('not_found')
+    const rv = await tools.get('reveals', cand.recordId)
+    if (!rv.success) return fail('not_revealed')
+    await logEvent(tools, cand, 'debrief_viewed', userId)
+    return { success: true, data: { viewed: true } }
+  },
+
+  funnelReport: async ({ userId, tools, env }) => {
+    if (userId !== env.OWNER_USER_ID) return fail('forbidden')
+    const rows = await tools.query('events', { limit: 500 })
+    if (!rows.success) return rows
+    const rooms = new Map<FunnelEvent, Set<string>>()
+    for (const step of FUNNEL) rooms.set(step, new Set())
+    const demoAt = new Map<string, number>()
+    const createdAt = new Map<string, number>()
+    for (const row of rows.data.records) {
+      const name = row.data.name
+      const candidateId = row.data.candidateId
+      const actorId = typeof row.data.userId === 'string' ? row.data.userId : ''
+      const at = typeof row.data.at === 'string' ? Date.parse(row.data.at) : Number.NaN
+      if (typeof name !== 'string' || typeof candidateId !== 'string') continue
+      if (!FUNNEL.includes(name as FunnelEvent)) continue
+      rooms.get(name as FunnelEvent)?.add(candidateId)
+      if (!actorId || Number.isNaN(at)) continue
+      if (name === 'demo_opened') {
+        const prior = demoAt.get(actorId)
+        if (prior === undefined || at < prior) demoAt.set(actorId, at)
+      }
+      if (name === 'room_created') {
+        const prior = createdAt.get(actorId)
+        if (prior === undefined || at < prior) createdAt.set(actorId, at)
+      }
+    }
+    const steps = FUNNEL.filter((step) => step !== 'demo_opened').map((step, index, list) => {
+      const count = rooms.get(step)?.size ?? 0
+      const next = list[index + 1]
+      const nextCount = next ? (rooms.get(next)?.size ?? 0) : 0
+      return {
+        step,
+        count,
+        toNext: !next || count === 0 ? 0 : Math.round((nextCount / count) * 100),
+      }
+    })
+    let demoFirst = 0
+    for (const [actorId, opened] of demoAt) {
+      const created = createdAt.get(actorId)
+      if (created !== undefined && created > opened) demoFirst += 1
+    }
+    return { success: true, data: { steps, demoFirst, capped: rows.data.records.length >= 500 } }
+  },
+
+  createDemoRoom: async ({ userId, tools }) => {
+    const prior = await tools.query('candidates', { where: { hiringManagerId: userId }, limit: 20 })
+    if (prior.success) {
+      const existing = prior.data.records.find((row) => row.data.isDemo === true || row.data.isDemo === 1)
+      if (existing) return { success: true, data: { candidateId: existing.recordId } }
+    }
+    const manager = await callerName(tools, userId)
+    const created = await tools.create('candidates', asRecord({
+      name: 'Sample candidate',
+      role: 'Product engineer',
+      status: 'revealed',
+      hiringManagerId: userId,
+      expectedPanelSize: 3,
+      panel: [userId],
+      panelNames: { [userId]: manager, 'sample-alex': 'Alex Chen', 'sample-sam': 'Sam Ortiz', 'sample-jordan': 'Jordan Lee' },
+      inviteCode: crypto.randomUUID(),
+      forceRevealAllowed: 'yes',
+      revealRequests: [],
+      pendingPanel: [],
+      pendingNames: {},
+      isDemo: true,
+    }))
+    if (!created.success) return created
+    const id = created.data.recordId
+    const demoRow = await loadCandidate(tools, id)
+    if (demoRow) await logEvent(tools, demoRow, 'demo_opened', userId)
+    const cards = [
+      sampleCard('sample-alex', 'Alex Chen', 4, 2, 3, 'lean_yes', 'Owns the data model.', 'Light on failure modes.'),
+      sampleCard('sample-sam', 'Sam Ortiz', 2, 4, 3, 'lean_no', 'Strong on rollout.', 'Thin on debugging.'),
+      sampleCard('sample-jordan', 'Jordan Lee', 3, 3, 4, 'strong_yes', 'Clear communicator.', 'Has not run an on-call rotation.'),
+    ]
+    const revealed = await tools.create('reveals', asRecord({
+      candidateId: id,
+      panel: [userId],
+      cards,
+      missing: [],
+      revealedBy: userId,
+      reason: 'forced',
+      seal: crypto.randomUUID(),
+    }), id)
+    if (!revealed.success) return revealed
+    for (const card of cards) {
+      const stored = await tools.create('scorecards', asRecord({
+        candidateId: id,
+        interviewerId: card.interviewerId,
+        scores: card.scores,
+        recommendation: card.recommendation,
+        strengths: card.strengths,
+        concerns: card.concerns,
+      }))
+      if (!stored.success) return stored
+      const submission = await tools.create('submissions', asRecord({
+        candidateId: id,
+        interviewerId: card.interviewerId,
+        panel: [userId],
+      }))
+      if (!submission.success) return submission
+    }
+    const stats = computeStats(cards.map((card) => ({
+      name: card.name,
+      scores: {
+        technical: card.scores.technical,
+        systemDesign: card.scores.systemDesign,
+        communication: card.scores.communication,
+      },
+    })))
+    const summary = {
+      consensus: ['Communication is the shared strength.', 'System design is the open question.'],
+      divergences: [
+        { dim: 'technical', note: 'Failure modes are still unowned.' },
+        { dim: 'systemDesign', note: 'The rollout plan split the panel.' },
+      ],
+      questions: ['What would the first month of ownership look like?', 'Which failure mode is still unowned?'],
+    }
+    const debrief = await tools.create('debriefs', asRecord({
+      candidateId: id,
+      panel: [userId],
+      status: 'ready',
+      stats,
+      summary,
+      model: 'sample',
+      error: '',
+      attempts: 0,
+    }), id)
+    if (!debrief.success) return debrief
+    return { success: true, data: { candidateId: id } }
   },
 }

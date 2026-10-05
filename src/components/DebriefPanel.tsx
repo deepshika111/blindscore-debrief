@@ -1,4 +1,5 @@
-import { DIM_LABEL, DIMS, discussFirst, type Dim } from '@/lib/stats'
+import { RUBRICS, metricLabel, type Metric, type Rubric } from '@/lib/rubrics'
+import { discussFirst } from '@/lib/stats'
 import type { DebriefData, RevealCard } from '@/types'
 import { Button } from './ui'
 
@@ -9,6 +10,7 @@ export function DebriefPanel({
   busy,
   canRetry,
   onGenerate,
+  rubric = RUBRICS.swe,
 }: {
   debrief: DebriefData | null
   cards: RevealCard[]
@@ -16,9 +18,11 @@ export function DebriefPanel({
   busy: boolean
   canRetry: boolean
   onGenerate: () => void
+  rubric?: Rubric
 }) {
   const status = debrief?.status
-  const first = discussFirst(cards)
+  const keys = rubric.metrics.map((metric) => metric.key)
+  const first = discussFirst(cards, keys)
   const attempts = debrief?.attempts ?? 0
 
   return (
@@ -29,7 +33,7 @@ export function DebriefPanel({
           <h3 className="text-sm font-medium">Discuss first</h3>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
             {first.map((dim) => (
-              <li key={dim}>{DIM_LABEL[dim]}</li>
+              <li key={dim}>{metricLabel(rubric, dim)}</li>
             ))}
           </ul>
         </div>
@@ -72,14 +76,14 @@ export function DebriefPanel({
 
       {status === 'ready' && debrief ? (
         <div className="mt-4 space-y-5">
-          <Scores cards={cards} />
+          <Scores cards={cards} metrics={rubric.metrics} />
           <Block title="Consensus" items={noteConsensus(debrief.summary?.consensus ?? [])} />
           <div>
             <h3 className="text-sm font-medium">Divergences</h3>
             <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
               {(debrief.summary?.divergences ?? []).map((item) => (
                 <li key={`${item.dim}-${item.note}`}>
-                  <span className="text-foreground">{label(item.dim)}. </span>
+                  <span className="text-foreground">{metricLabel(rubric, item.dim)}. </span>
                   {item.note}
                 </li>
               ))}
@@ -92,16 +96,16 @@ export function DebriefPanel({
   )
 }
 
-function Scores({ cards }: { cards: RevealCard[] }) {
+function Scores({ cards, metrics }: { cards: RevealCard[]; metrics: readonly Metric[] }) {
   if (cards.length === 0) return null
   return (
     <div>
       <h3 className="text-sm font-medium">Scores</h3>
       <ul className="mt-2 divide-y divide-border rounded-xl border border-border">
-        {DIMS.map((dim) => (
-          <li key={dim} className="flex items-baseline justify-between gap-4 px-4 py-3 text-sm">
-            <span>{DIM_LABEL[dim]}</span>
-            <span className="font-display text-xl font-semibold tabular-nums">{scoreText(cards, dim)}</span>
+        {metrics.map((metric) => (
+          <li key={metric.key} className="flex items-baseline justify-between gap-4 px-4 py-3 text-sm">
+            <span>{metric.label}</span>
+            <span className="font-display text-xl font-semibold tabular-nums">{scoreText(cards, metric.key)}</span>
           </li>
         ))}
       </ul>
@@ -109,7 +113,7 @@ function Scores({ cards }: { cards: RevealCard[] }) {
   )
 }
 
-function scoreText(cards: RevealCard[], dim: Dim): string {
+function scoreText(cards: RevealCard[], dim: string): string {
   const first = cards[0]?.scores[dim]
   if (cards.every((card) => card.scores[dim] === first)) return String(first)
   return cards.map((card) => `${card.name} ${card.scores[dim]}`).join(', ')
@@ -132,8 +136,4 @@ function Block({ title, items }: { title: string; items: string[] }) {
       </ul>
     </div>
   )
-}
-
-function label(dim: string): string {
-  return dim in DIM_LABEL ? DIM_LABEL[dim as Dim] : dim
 }

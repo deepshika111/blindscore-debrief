@@ -1,4 +1,5 @@
-import { DIM_LABEL, DIMS, metricSplit, panelVote } from '@/lib/stats'
+import { RUBRICS, type Metric } from '@/lib/rubrics'
+import { metricSplit, panelVote } from '@/lib/stats'
 import { REC_LABEL, type RevealCard } from '@/types'
 
 export function RevealGrid({
@@ -6,11 +7,13 @@ export function RevealGrid({
   missing,
   panelNames,
   reason,
+  metrics = RUBRICS.swe.metrics,
 }: {
   cards: RevealCard[]
   missing: string[]
   panelNames: Record<string, string>
   reason: 'auto' | 'forced'
+  metrics?: readonly Metric[]
 }) {
   const vote = panelVote(cards)
 
@@ -37,8 +40,8 @@ export function RevealGrid({
         <section>
           <h2 className="font-display text-2xl font-semibold tracking-tight">Each metric</h2>
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            {DIMS.map((dim) => (
-              <MetricChart key={dim} label={DIM_LABEL[dim]} scores={cards.map((card) => card.scores[dim])} />
+            {metrics.map((metric) => (
+              <MetricChart key={metric.key} label={metric.label} scores={cards.map((card) => card.scores[metric.key] ?? 0)} />
             ))}
           </div>
         </section>

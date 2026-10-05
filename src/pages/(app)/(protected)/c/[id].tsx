@@ -7,6 +7,7 @@ import { ScorecardForm } from '@/components/ScorecardForm'
 import { Badge, Button, ConfirmModal, useToast } from '@/components/ui'
 import { callAction, explainActionError } from '@/lib/action'
 import { debriefIcs } from '@/lib/calendar'
+import { RUBRICS, type Rubric } from '@/lib/rubrics'
 import { inviteMessage, mailtoHref } from '@/lib/invites'
 import type { CandidateData, DebriefData, RevealCard, RevealData, ScorecardData, SubmissionData } from '@/types'
 
@@ -588,6 +589,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
             missing={missing}
             panelNames={panelNames}
             reason={reason}
+            metrics={shell?.rubric?.metrics ?? RUBRICS.swe.metrics}
           />
           <DebriefPanel
             debrief={debrief}
@@ -595,6 +597,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
             cardCount={shownCards.length}
             busy={debriefBusy}
             canRetry={isManager}
+            rubric={shell?.rubric ?? RUBRICS.swe}
             onGenerate={() => void generateDebrief()}
           />
         </div>
@@ -616,6 +619,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
           <div className="mt-5">
             <ScorecardForm
               candidateId={candidateId}
+              metrics={shell?.rubric?.metrics ?? RUBRICS.swe.metrics}
               onSubmitted={() => setShell((current) => (current ? { ...current, mine: true, submitted: current.submitted + 1 } : current))}
             />
           </div>
@@ -710,6 +714,7 @@ interface RoomShell {
   meetingAt?: string
   meetingMinutes?: number
   meetingSequence?: number
+  rubric?: Rubric
   invites?: Array<{ id: string; label: string; email: string; status: string; name: string }>
   cards?: RevealCard[]
   missing?: string[]

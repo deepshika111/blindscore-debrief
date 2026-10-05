@@ -60,6 +60,7 @@ export const candidatesSchema: CollectionSchema = {
     { name: 'meetingAt', storage: 'text', interpretation: { kind: 'datetime' } },
     { name: 'meetingMinutes', storage: 'number', interpretation: 'plain' },
     { name: 'meetingSequence', storage: 'number', interpretation: 'plain' },
+    json('rubric'),
   ],
   collaboratorsField: 'panel',
   permissions: panelOnly,

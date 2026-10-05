@@ -17,11 +17,11 @@ import type { Env } from '../../worker'
 import { claimInvite } from '../server/claim-invite'
 import { chargeRate } from '../server/rate-limit'
 import { classifyInvite, hashToken, normalizeEmail, randomToken } from '../lib/invites'
+import { rubricById, rubricFromRoom, type Rubric } from '../lib/rubrics'
 import { computeStats } from '../lib/stats'
 import type { Recommendation, RevealCard } from '../types'
 import { RECS } from '../types'
 
-const DIMS = ['technical', 'systemDesign', 'communication'] as const
 const fail = (error: string): ActionResult<never> => ({ success: false, error })
 const nameText = z.string().trim().min(1).max(60)
 const roleText = z.string().trim().min(1).max(80)
@@ -67,6 +67,7 @@ interface CandidateRow {
   meetingAt: string
   meetingMinutes: number
   meetingSequence: number
+  rubric: Rubric
 }
 
 function strings(value: unknown): string[] {
@@ -122,6 +123,7 @@ function readCandidate(record: { recordId: string; updatedAt: string; data: Reco
     meetingAt: typeof data.meetingAt === 'string' ? data.meetingAt : '',
     meetingMinutes: typeof data.meetingMinutes === 'number' ? data.meetingMinutes : 0,
     meetingSequence: typeof data.meetingSequence === 'number' ? data.meetingSequence : 0,
+    rubric: rubricFromRoom(data.rubric),
   }
 }
 
@@ -155,25 +157,31 @@ function stripFences(text: string): string {
   return (fenced?.[1] ?? trimmed).trim()
 }
 
+function readScores(value: unknown, keys?: readonly string[]): Record<string, number> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const source = value as Record<string, unknown>
+  const wanted = keys ?? Object.keys(source)
+  if (wanted.length === 0) return null
+  const scores: Record<string, number> = {}
+  for (const key of wanted) {
+    if (!isScore(source[key])) return null
+    scores[key] = source[key]
+  }
+  return scores
+}
+
 function readRevealCards(value: unknown): RevealCard[] {
   if (!Array.isArray(value)) return []
   const cards: RevealCard[] = []
   for (const entry of value) {
     if (!entry || typeof entry !== 'object') continue
     const card = entry as Record<string, unknown>
-    const scores = card.scores
-    if (!scores || typeof scores !== 'object' || Array.isArray(scores)) continue
-    if (typeof card.interviewerId !== 'string' || !isRec(card.recommendation)) continue
-    const numeric = scores as Record<string, unknown>
-    if (!DIMS.every((dim) => isScore(numeric[dim]))) continue
+    const scores = readScores(card.scores)
+    if (!scores || typeof card.interviewerId !== 'string' || !isRec(card.recommendation)) continue
     cards.push({
       interviewerId: card.interviewerId,
       name: typeof card.name === 'string' ? card.name : 'Interviewer',
-      scores: {
-        technical: numeric.technical as number,
-        systemDesign: numeric.systemDesign as number,
-        communication: numeric.communication as number,
-      },
+      scores,
       recommendation: card.recommendation,
       strengths: typeof card.strengths === 'string' ? card.strengths : '',
       concerns: typeof card.concerns === 'string' ? card.concerns : '',
@@ -274,19 +282,13 @@ function gateManager(cand: CandidateRow, userId: string): ActionResult<never> | 
 function ownScorecard(
   records: Array<{ data: Record<string, unknown> }>,
   userId: string,
-): { scores: { technical: number; systemDesign: number; communication: number }; recommendation: Rec; strengths: string; concerns: string } | null {
+): { scores: Record<string, number>; recommendation: Rec; strengths: string; concerns: string } | null {
   const mine = records.find((row) => row.data.interviewerId === userId)
   if (!mine || !isRec(mine.data.recommendation)) return null
-  const scores = mine.data.scores
-  if (!scores || typeof scores !== 'object' || Array.isArray(scores)) return null
-  const numeric = scores as Record<string, unknown>
-  if (!DIMS.every((dim) => isScore(numeric[dim]))) return null
+  const scores = readScores(mine.data.scores)
+  if (!scores) return null
   return {
-    scores: {
-      technical: numeric.technical as number,
-      systemDesign: numeric.systemDesign as number,
-      communication: numeric.communication as number,
-    },
+    scores,
     recommendation: mine.data.recommendation,
     strengths: typeof mine.data.strengths === 'string' ? mine.data.strengths : '',
     concerns: typeof mine.data.concerns === 'string' ? mine.data.concerns : '',
@@ -366,19 +368,12 @@ async function revealRoom(
   const cards: RevealCard[] = []
   for (const row of queried.data.records) {
     const data = row.data
-    const scores = data.scores
-    if (!scores || typeof scores !== 'object' || Array.isArray(scores)) continue
-    if (typeof data.interviewerId !== 'string' || !isRec(data.recommendation)) continue
-    const numeric = scores as Record<string, unknown>
-    if (!DIMS.every((dim) => isScore(numeric[dim]))) continue
+    const scores = readScores(data.scores, cand.rubric.metrics.map((metric) => metric.key))
+    if (!scores || typeof data.interviewerId !== 'string' || !isRec(data.recommendation)) continue
     cards.push({
       interviewerId: data.interviewerId,
       name: cand.panelNames[data.interviewerId] ?? 'Interviewer',
-      scores: {
-        technical: numeric.technical as number,
-        systemDesign: numeric.systemDesign as number,
-        communication: numeric.communication as number,
-      },
+      scores,
       recommendation: data.recommendation,
       strengths: typeof data.strengths === 'string' ? data.strengths : '',
       concerns: typeof data.concerns === 'string' ? data.concerns : '',
@@ -436,10 +431,11 @@ async function openedRoom(tools: Tools, cand: CandidateRow): Promise<ActionResul
 function buildPrompt(
   cards: Array<{ name: string; scores: Record<string, number>; strengths: string; concerns: string }>,
   stats: unknown,
+  rubric: Rubric,
 ): string {
   const notes = cards
     .map((card) => {
-      const attrs = DIMS.map((dim) => `${dim}="${card.scores[dim] ?? ''}"`).join(' ')
+      const attrs = rubric.metrics.map((metric) => `${metric.label}="${card.scores[metric.key] ?? ''}"`).join(' ')
       return `<notes interviewer="${escapeXml(card.name)}" ${attrs}>
 Strengths: ${escapeXml(card.strengths)}
 Concerns: ${escapeXml(card.concerns)}
@@ -448,7 +444,8 @@ Concerns: ${escapeXml(card.concerns)}
     .join('\n')
   return `Precomputed stats (authoritative, do not recalculate): ${JSON.stringify(stats)}
 ${notes}
-For each dimension with level "high", explain the disagreement using the notes and write one question that would resolve it.`
+Rubric: ${rubric.metrics.map((metric) => metric.label).join(', ')}.
+For each dimension with level "high", explain the disagreement using the notes and write one question that would resolve it. Use the rubric labels.`
 }
 
 function sampleCard(
@@ -613,6 +610,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
       pendingNames: {},
       isDemo: false,
       allowOpenLink: allowOpenLink ? 'yes' : 'no',
+      rubric: rubricById(params.rubric),
     }))
     if (!created.success) return created
     const cand = await loadCandidate(tools, created.data.recordId)
@@ -675,6 +673,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
       meetingAt: cand.meetingAt,
       meetingMinutes: cand.meetingMinutes,
       meetingSequence: cand.meetingSequence,
+      rubric: cand.rubric,
       revealRequestNames: cand.revealRequests.map((id) => cand.panelNames[id] || 'An interviewer'),
       ...(isManager && inviteRows && inviteRows.success
         ? {
@@ -958,10 +957,9 @@ export const actions: Record<string, ActionHandler<Env>> = {
       return fail('already_revealed')
     }
 
-    const raw = params.scores
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('bad_scores')
-    const scores = raw as Record<string, unknown>
-    if (!DIMS.every((dim) => isScore(scores[dim]))) return fail('bad_scores')
+    const keys = cand.rubric.metrics.map((metric) => metric.key)
+    const scores = readScores(params.scores, keys)
+    if (!scores) return fail('bad_scores')
     if (!isRec(params.recommendation)) return fail('bad_rec')
     const strengths = readNote(params.strengths)
     const concerns = readNote(params.concerns)
@@ -970,11 +968,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
     const card = await tools.create('scorecards', asRecord({
       candidateId: cand.recordId,
       interviewerId: userId,
-      scores: {
-        technical: scores.technical,
-        systemDesign: scores.systemDesign,
-        communication: scores.communication,
-      },
+      scores,
       recommendation: params.recommendation,
       strengths,
       concerns,
@@ -1151,7 +1145,8 @@ export const actions: Record<string, ActionHandler<Env>> = {
     if (!(await chargeRate(env, `debrief:${candidateId}`, 3, 60 * 60 * 1000))) return fail('rate_limited')
 
     const cards = readCards(revealRow.data.cards)
-    const stats = computeStats(cards)
+    const keys = cand.rubric.metrics.map((metric) => metric.key)
+    const stats = computeStats(cards, keys)
     const base = { candidateId: revealRow.recordId, panel, stats, attempts: attempts + 1 }
     const pending = await tools.create('debriefs', asRecord({ ...base, status: 'pending' }), revealRow.recordId)
     if (!pending.success) return pending
@@ -1162,7 +1157,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
         model: ai('claude-sonnet-5'),
         maxOutputTokens: 1500,
         system: SYSTEM_PROMPT,
-        prompt: buildPrompt(cards, stats),
+        prompt: buildPrompt(cards, stats, cand.rubric),
       })
       const parsed = Debrief.safeParse(JSON.parse(stripFences(text)))
       if (!parsed.success) throw new Error('bad_model_output')
@@ -1259,6 +1254,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
       pendingPanel: [],
       pendingNames: {},
       isDemo: true,
+      rubric: rubricById('swe'),
     }))
     if (!created.success) return created
     const id = created.data.recordId
@@ -1296,14 +1292,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
       }))
       if (!submission.success) return submission
     }
-    const stats = computeStats(cards.map((card) => ({
-      name: card.name,
-      scores: {
-        technical: card.scores.technical,
-        systemDesign: card.scores.systemDesign,
-        communication: card.scores.communication,
-      },
-    })))
+    const stats = computeStats(cards.map((card) => ({ name: card.name, scores: card.scores })), ['technical', 'systemDesign', 'communication'])
     const summary = {
       consensus: ['Communication is the shared strength.', 'System design is the open question.'],
       divergences: [

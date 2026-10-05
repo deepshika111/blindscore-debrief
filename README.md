@@ -4,6 +4,20 @@
 
 Interviewers score a candidate without seeing each other. The room opens when the panel is full, or when the hiring manager force-reveals.
 
+How it is built: [Build a blind-voting app with DeepSpace in a day](docs/build-a-blind-voting-app.md).
+
+## Use this template
+
+This checkout is a working DeepSpace app. The template release is the local tag `v0.1.0`. To run it:
+
+1. `npx deepspace auth login`
+2. `npm install`
+3. `npm run dev` for Chrome on http://localhost. Safari needs `npm run dev:safari`, then https://localhost:5173, because Safari drops the sign-in cookie on plain http.
+4. `npx tsc --noEmit` and `npm run test:unit`
+5. From `tests/`, `DEEPSPACE_PORT=<a free port>` `npx playwright test`. Port 5173 is the dev server. The Playwright config starts its own Vite on `DEEPSPACE_PORT`.
+
+`generateDebrief` is the only model call. A daily cron deletes rooms past the retention window. There is no job queue and no assistant route. Do not put `RESEND_API_KEY` or `RESEND_FROM` in the repo. Set them with `npx deepspace secrets set` when you want outbound email. Until both exist, each invite still has its own `mailto:` link.
+
 ## Security model
 
 - Clients never write BlindScore collections. Every write is a server action in `src/actions/index.ts`.

@@ -1,0 +1,15 @@
+---
+description: BlindScore data rules on DeepSpace
+alwaysApply: true
+---
+
+# BlindScore data rules
+
+Five collections: `candidates`, `scorecards`, `submissions`, `reveals`, `debriefs`.
+
+- `scorecards` is `read: 'own'` for member and admin. `ownerField` is `interviewerId`. Clients have `create: false`. Do not set `userBound` on that column.
+- `submissions` carries `candidateId`, `interviewerId`, and `panel`. No score columns.
+- Reveal writes one `reveals` row whose record id is the candidate id, then sets `candidates.status` to `revealed`. Those are two writes, not one transaction.
+- `debriefs` is one shared row per candidate, written by `generateDebrief` with `generateText`. The action stores stats even when the model fails.
+- Anonymous access is denied with an explicit `*` role on every BlindScore collection.
+- Admin permissions match member. The app owner is pinned to admin.

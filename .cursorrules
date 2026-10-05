@@ -1,0 +1,19 @@
+# BlindScore
+
+Stack: DeepSpace SDK (`deepspace`, `deepspace/worker`), Cloudflare Workers, Durable Objects, React 19, Vite, TypeScript, Tailwind CSS v4.
+
+Server actions live in `src/actions/index.ts`. Schemas live in `src/schemas/blindscore.ts`. The worker entry is `worker.ts`.
+
+## Constraints
+
+1. Clients never write BlindScore collections. `createCandidate`, `joinPanel`, `submitScorecard`, `forceReveal`, and `generateDebrief` own every write.
+
+2. Scores live in `scorecards` (author-only, `read: 'own'` for member and admin) and in the single `reveals` row. `submissions` has no score columns.
+
+3. Identity comes from `ctx.userId` only. Do not set `userBound` on `interviewerId`.
+
+4. Reveal creates one `reveals` record with `recordId === candidateId`, then updates candidate status. Do not describe those two writes as one transaction.
+
+5. The debrief uses `createDeepSpaceAI` and `generateText` inside `generateDebrief`. Do not put an API key in the repo. The model writes prose; `computeStats` does the arithmetic. The model must not recommend hire or no-hire.
+
+6. Strict TypeScript. No `any`. No new dependencies without asking.

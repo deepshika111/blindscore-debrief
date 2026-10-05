@@ -152,6 +152,10 @@ export interface Env extends DOBindings<typeof __DO_MANIFEST__> {
    * calls always forward the signed-in caller's JWT instead.
    */
   APP_OWNER_JWT: string
+  /** Worker secret. Never commit the value. Sending stays off until both are set. */
+  RESEND_API_KEY?: string
+  /** Verified From address, for example "BlindScore <invites@example.com>". */
+  RESEND_FROM?: string
   /**
    * Enables /api/debug/* only when exactly "true". The route still requires
    * an authenticated app owner/admin. deepspace dev/test set it locally.

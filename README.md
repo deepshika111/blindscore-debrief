@@ -28,4 +28,4 @@ Interviewers score a candidate without seeing each other. The room opens when th
 
 - The two reveal writes are not one database transaction. A crash between them is repaired on the next `roomShell`.
 - Rate limits are per isolate of one Durable Object. A burst that arrives as two requests can still interleave only at the action boundary; the counter itself is one request.
-- There is no outbound email. The hiring manager copies the invite link. A provider such as Resend would need a Worker secret and a verified domain.
+- Outbound email sends only when `RESEND_API_KEY` and `RESEND_FROM` are Worker secrets. Each message contains one person's link. The calendar file, when a debrief time is set, uses the room URL.

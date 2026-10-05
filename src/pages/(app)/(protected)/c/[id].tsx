@@ -357,6 +357,23 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
     }
   }
 
+  async function sendEmail(inviteId: string, url: string) {
+    const token = new URL(url).searchParams.get('t') ?? ''
+    setMemberBusy(inviteId)
+    try {
+      await callAction('sendInvites', {
+        candidateId,
+        origin: window.location.origin,
+        invites: [{ id: inviteId, token }],
+      })
+      success('Email sent')
+    } catch (error) {
+      toastError('Could not send', explainActionError(error))
+    } finally {
+      setMemberBusy('')
+    }
+  }
+
   async function nudge(inviteId: string) {
     setMemberBusy(inviteId)
     try {
@@ -511,6 +528,11 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
                         <Button type="button" variant="outline" onClick={() => void copyLink(link.url)}>
                           Copy
                         </Button>
+                        {link.email ? (
+                          <Button type="button" variant="outline" disabled={memberBusy === row.id} onClick={() => void sendEmail(row.id, link.url)}>
+                            Send
+                          </Button>
+                        ) : null}
                         {canShare ? (
                           <Button type="button" variant="outline" onClick={() => void shareLink(link.url)}>
                             Share

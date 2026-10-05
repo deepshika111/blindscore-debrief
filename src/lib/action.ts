@@ -10,6 +10,8 @@ const COPY: Record<string, string> = {
   bad_email: 'Enter a valid email, or leave it blank.',
   bad_meeting: 'Enter a date and a duration between 15 and 180 minutes.',
   nudge_done: 'That person already submitted.',
+  email_unconfigured: 'Email is not set up on this app yet.',
+  email_failed: 'The email did not send.',
   panel_full: 'This panel is already full.',
   not_found: 'Room not found.',
   forbidden: 'You are not allowed to do that.',

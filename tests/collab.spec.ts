@@ -530,3 +530,15 @@ test('a saved person refills the next room and can be removed', async ({ users }
   await hm.page.getByTestId('saved-person').filter({ hasText: 'Jordan Lee' }).getByRole('button', { name: 'Remove' }).click()
   await expect(hm.page.getByTestId('saved-person').filter({ hasText: 'Jordan Lee' })).toHaveCount(0)
 })
+
+test('calibration shows only the signed-in person', async ({ users }) => {
+  const [hm] = await users(1)
+  await hm.page.goto('/dashboard')
+  const result = await postAction(hm.page, 'myCalibration', {})
+  expect(result.status).toBe(200)
+  expect(result.text).not.toContain('interviewerId')
+  expect(result.text).not.toContain('strengths')
+  await hm.page.goto('/calibration')
+  await expect(hm.page.getByRole('heading', { name: 'My calibration' })).toBeVisible()
+  await expect(hm.page.getByTestId('calibration-status')).toBeVisible({ timeout: 20_000 })
+})

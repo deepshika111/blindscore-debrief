@@ -45,8 +45,58 @@ export const __DO_MANIFEST__ = [
 ] as const satisfies DOManifest
 
 export class AppRecordRoom extends RecordRoom<Env> {
+  private readonly storage: DurableObjectStorage
+
   constructor(state: DurableObjectState, env: Env) {
     super(state, env, schemas, { ownerUserId: env.OWNER_USER_ID })
+    this.storage = state.storage
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url)
+    if (url.pathname === '/blindscore/rate-limit' && request.method === 'POST') {
+      return this.charge(request)
+    }
+    return super.fetch(request)
+  }
+
+  /** One request, so two callers cannot both pass the same window. */
+  private async charge(request: Request): Promise<Response> {
+    const body = (await request.json()) as { key?: unknown; limit?: unknown; windowMs?: unknown }
+    const key = typeof body.key === 'string' ? body.key.slice(0, 200) : ''
+    const limit = typeof body.limit === 'number' ? body.limit : 0
+    const windowMs = typeof body.windowMs === 'number' ? body.windowMs : 0
+    if (!key || !Number.isInteger(limit) || limit < 1 || !Number.isInteger(windowMs) || windowMs < 1) {
+      return Response.json({ allowed: false })
+    }
+    const sql = this.storage.sql
+    sql.exec(
+      `CREATE TABLE IF NOT EXISTS blindscore_rate (
+        key TEXT PRIMARY KEY,
+        window_start INTEGER NOT NULL,
+        count INTEGER NOT NULL
+      )`,
+    )
+    const now = Date.now()
+    const rows = sql
+      .exec<{ window_start: number; count: number }>(
+        `SELECT window_start, count FROM blindscore_rate WHERE key = ?`,
+        key,
+      )
+      .toArray()
+    const row = rows[0]
+    if (!row || now - row.window_start >= windowMs) {
+      sql.exec(
+        `INSERT INTO blindscore_rate (key, window_start, count) VALUES (?, ?, 1)
+         ON CONFLICT(key) DO UPDATE SET window_start = excluded.window_start, count = 1`,
+        key,
+        now,
+      )
+      return Response.json({ allowed: true })
+    }
+    if (row.count >= limit) return Response.json({ allowed: false })
+    sql.exec(`UPDATE blindscore_rate SET count = count + 1 WHERE key = ?`, key)
+    return Response.json({ allowed: true })
   }
 }
 

@@ -6,10 +6,11 @@ import type { CandidateData, SubmissionData } from '@/types'
 
 interface Notice {
   id: string
-  kind: 'submitted' | 'reveal'
+  kind: 'submitted' | 'reveal' | 'join'
   candidateId: string
   candidateName: string
   name: string
+  userId: string
 }
 
 /**
@@ -35,6 +36,29 @@ export function ManagerNotices() {
     for (const notice of notices) {
       if (seen.current.has(notice.id)) continue
       seen.current.add(notice.id)
+      if (notice.kind === 'join') {
+        toastRef.current({
+          type: 'info',
+          title: `${notice.name} wants to join`,
+          description: notice.candidateName,
+          duration: 20000,
+          actions: [
+            {
+              label: 'Approve',
+              onClick: () => {
+                void callAction('approveJoin', { candidateId: notice.candidateId, userId: notice.userId })
+              },
+            },
+            {
+              label: 'Deny',
+              onClick: () => {
+                void callAction('denyJoin', { candidateId: notice.candidateId, userId: notice.userId })
+              },
+            },
+          ],
+        })
+        continue
+      }
       toastRef.current({
         type: 'info',
         title: notice.kind === 'reveal' ? `${notice.name} is requesting force reveal` : `${notice.name} submitted`,
@@ -91,6 +115,7 @@ function noticesForManager(
       candidateId: row.data.candidateId,
       candidateName: candidate.data.name,
       name: typeof name === 'string' && name.trim() ? name.trim() : 'An interviewer',
+      userId: row.data.interviewerId,
     })
   }
   for (const [candidateId, candidate] of managed) {
@@ -102,6 +127,18 @@ function noticesForManager(
         candidateId,
         candidateName: candidate.data.name,
         name: typeof asked === 'string' && asked.trim() ? asked.trim() : 'An interviewer',
+        userId: interviewerId,
+      })
+    }
+    for (const interviewerId of candidate.data.pendingPanel ?? []) {
+      const asked = candidate.data.pendingNames?.[interviewerId]
+      notices.push({
+        id: `${candidateId}:join:${interviewerId}`,
+        kind: 'join',
+        candidateId,
+        candidateName: candidate.data.name,
+        name: typeof asked === 'string' && asked.trim() ? asked.trim() : 'Someone',
+        userId: interviewerId,
       })
     }
   }

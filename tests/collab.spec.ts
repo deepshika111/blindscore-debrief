@@ -15,7 +15,24 @@
  * persisted to `~/.deepspace/playwright-states/`), context creation, and
  * cleanup. No need to manage browser contexts manually.
  */
+import type { Page } from '@playwright/test'
 import { test, expect, loadAllTestAccounts } from 'deepspace/testing'
+
+async function postAction(page: Page, name: string, params: Record<string, unknown>) {
+  return page.evaluate(async ({ name, params }) => {
+    const tokenRes = await fetch('/api/auth/token', { method: 'POST', credentials: 'include' })
+    const tokenBody = (await tokenRes.json()) as { token?: string }
+    const res = await fetch(`/api/actions/${name}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tokenBody.token ?? ''}`,
+      },
+      body: JSON.stringify(params),
+    })
+    return { status: res.status, text: await res.text() }
+  }, { name, params })
+}
 
 // A machine that has never created test accounts is the normal state of a
 // fresh checkout, and there `users()` throws — turning "you have no pool yet"
@@ -169,6 +186,9 @@ test('an outsider socket never receives a sealed scorecard phrase', async ({ use
   await expect(interviewer.page.getByRole('status')).toContainText(`You're invited to score ${candidateName}`, { timeout: 20_000 })
   await interviewer.page.getByLabel('Name on the panel').fill('Interviewer')
   await interviewer.page.getByTestId('join-panel').click()
+  await expect(interviewer.page.getByTestId('join-waiting')).toBeVisible()
+  await expect(hm.page.getByRole('button', { name: 'Approve Interviewer' })).toBeVisible({ timeout: 20_000 })
+  await hm.page.getByRole('button', { name: 'Approve Interviewer' }).click()
   await expect(interviewer.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
   await interviewer.page.getByRole('button', { name: 'Request force reveal' }).click()
   await expect(hm.page.getByRole('alert').filter({ hasText: 'Interviewer is requesting force reveal' })).toBeVisible({ timeout: 15_000 })
@@ -196,16 +216,35 @@ test('an outsider socket never receives a sealed scorecard phrase', async ({ use
   await expect(hm.page.getByRole('alert').filter({ hasText: 'Interviewer submitted' })).toBeVisible({ timeout: 15_000 })
 
   const roomPath = new URL(hm.page.url()).pathname
+  const candidateId = roomPath.split('/').pop() ?? ''
   await outsider.page.goto(roomPath)
   await expect(outsider.page.getByTestId('room-not-found')).toBeVisible({ timeout: 20_000 })
   await expect.poll(() => outsiderFrames.length, { timeout: 15_000 }).toBeGreaterThan(0)
   expect(outsiderFrames.join('\n')).not.toContain(sentinel)
 
+  const denied = await postAction(interviewer.page, 'deleteCandidate', { candidateId })
+  expect(denied.status).toBe(403)
+  expect(denied.text).not.toContain(sentinel)
+  for (const actor of [outsider.page, interviewer.page]) {
+    for (const name of ['roomShell', 'forceReveal'] as const) {
+      const body = await postAction(actor, name, { candidateId })
+      expect(body.text, name).not.toContain(sentinel)
+      expect(body.text, name).not.toContain('Needs a clearer rollout plan.')
+    }
+  }
+
   await hm.page.getByTestId('force-reveal').click()
   await hm.page.getByRole('button', { name: 'Reveal', exact: true }).click()
   await expect(hm.page.getByText('Needs a clearer rollout plan.')).toBeVisible({ timeout: 20_000 })
+  await expect(interviewer.page.getByText('Needs a clearer rollout plan.')).toBeVisible({ timeout: 20_000 })
+  await expect(interviewer.page.getByRole('button', { name: 'Retry' })).toHaveCount(0)
   await expect.poll(() => hmFrames.join('\n').includes(sentinel), { timeout: 15_000 }).toBe(true)
   expect(outsiderFrames.join('\n')).not.toContain(sentinel)
+
+  const late = await postAction(interviewer.page, 'submitScorecard', { candidateId })
+  expect(late.status).toBe(409)
+  expect(late.text).toContain('Room already revealed')
+  expect(late.text).not.toContain(sentinel)
 })
 
 test('submit stays active and names each missing field', async ({ users }) => {
@@ -229,4 +268,56 @@ test('submit stays active and names each missing field', async ({ users }) => {
   await hm.page.getByTestId('seal-scorecard').click()
   await expect(hm.page.getByRole('alert').filter({ hasText: 'Fill in System design.' })).toBeVisible()
   await expect(hm.page.getByRole('alert').filter({ hasText: 'Fill in Technical.' })).toHaveCount(0)
+})
+
+test('sample debrief opens on the split without a second account', async ({ users }) => {
+  test.setTimeout(60_000)
+  const [hm] = await users(1)
+  await hm.page.goto('/dashboard')
+  await hm.page.getByTestId('sample-debrief').click()
+  await expect(hm.page.getByTestId('room-title')).toHaveText('Sample candidate', { timeout: 20_000 })
+  await expect(hm.page.getByTestId('discuss-first')).toContainText('Technical')
+  await expect(hm.page.getByTestId('discuss-first')).toContainText('System design')
+  await expect(hm.page.getByTestId('discuss-first')).not.toContainText('Communication')
+  await expect(hm.page.getByRole('button', { name: 'Retry' })).toHaveCount(0)
+  await hm.page.goto('/admin/funnel')
+  await expect(hm.page.getByRole('heading', { name: 'Activation' })).toBeVisible()
+})
+
+test('two last submissions leave one snapshot with both cards', async ({ users }) => {
+  test.setTimeout(90_000)
+  const [hm, interviewer] = await users(2)
+  const candidateName = `__test-${Date.now()}__`
+  await hm.page.goto('/dashboard')
+  await hm.page.getByTestId('new-candidate').click()
+  await hm.page.getByRole('textbox', { name: 'Candidate', exact: true }).fill(candidateName)
+  await hm.page.getByLabel('Role').fill('Backend engineer')
+  await hm.page.getByLabel('Panel size').fill('2')
+  await hm.page.getByRole('button', { name: 'Open room' }).click()
+  await expect(hm.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
+  const candidateId = new URL(hm.page.url()).pathname.split('/').pop() ?? ''
+  const invite = await hm.page.getByTestId('invite-link').inputValue()
+  await interviewer.page.goto(invite)
+  await interviewer.page.getByLabel('Name on the panel').fill('Interviewer')
+  await interviewer.page.getByTestId('join-panel').click()
+  await expect(hm.page.getByRole('button', { name: 'Approve Interviewer' })).toBeVisible({ timeout: 20_000 })
+  await hm.page.getByRole('button', { name: 'Approve Interviewer' }).click()
+  await expect(interviewer.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
+
+  const card = {
+    candidateId,
+    scores: { technical: 4, systemDesign: 2, communication: 3 },
+    recommendation: 'lean_yes',
+    concerns: 'Needs a rollout.',
+  }
+  const [first, second] = await Promise.all([
+    postAction(hm.page, 'submitScorecard', { ...card, strengths: 'Manager note.' }),
+    postAction(interviewer.page, 'submitScorecard', { ...card, strengths: 'Interviewer note.' }),
+  ])
+  expect([first.status, second.status].every((status) => status === 200 || status === 409)).toBe(true)
+  const shell = await postAction(hm.page, 'roomShell', { candidateId })
+  expect(shell.status).toBe(200)
+  const parsed = JSON.parse(shell.text) as { data?: { cards?: Array<{ strengths: string }> } }
+  const strengths = (parsed.data?.cards ?? []).map((entry) => entry.strengths).sort()
+  expect(strengths).toEqual(['Interviewer note.', 'Manager note.'])
 })

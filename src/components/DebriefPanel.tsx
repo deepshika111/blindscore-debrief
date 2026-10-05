@@ -1,4 +1,4 @@
-import { DIM_LABEL, DIMS, type Dim } from '@/lib/stats'
+import { DIM_LABEL, DIMS, discussFirst, type Dim } from '@/lib/stats'
 import type { DebriefData, RevealCard } from '@/types'
 import { Button } from './ui'
 
@@ -7,26 +7,46 @@ export function DebriefPanel({
   cards,
   cardCount,
   busy,
+  canRetry,
   onGenerate,
 }: {
   debrief: DebriefData | null
   cards: RevealCard[]
   cardCount: number
   busy: boolean
+  canRetry: boolean
   onGenerate: () => void
 }) {
   const status = debrief?.status
+  const first = discussFirst(cards)
+  const attempts = debrief?.attempts ?? 0
 
   return (
     <section className="rounded-2xl border border-border bg-card/70 p-5 sm:p-6">
       <h2 className="font-display text-2xl font-semibold tracking-tight">Debrief</h2>
+      {first.length > 0 ? (
+        <div className="mt-4" data-testid="discuss-first">
+          <h3 className="text-sm font-medium">Discuss first</h3>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+            {first.map((dim) => (
+              <li key={dim}>{DIM_LABEL[dim]}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {!debrief ? (
         <div className="mt-4">
-          <p className="text-sm text-muted-foreground">The score grid is complete. The written debrief has not been generated.</p>
-          <Button className="mt-3" onClick={onGenerate} disabled={busy} loading={busy}>
-            Generate debrief
-          </Button>
+          <p className="text-sm text-muted-foreground">
+            {canRetry
+              ? 'The score grid is complete. The written debrief has not been generated.'
+              : 'The hiring manager can generate the written debrief.'}
+          </p>
+          {canRetry ? (
+            <Button className="mt-3" onClick={onGenerate} disabled={busy} loading={busy}>
+              Generate debrief
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -41,9 +61,12 @@ export function DebriefPanel({
       {status === 'failed' ? (
         <div className="mt-4 space-y-4">
           <p className="text-sm text-destructive">AI summary unavailable</p>
-          <Button variant="outline" onClick={onGenerate} disabled={busy} loading={busy}>
-            Retry
-          </Button>
+          {canRetry && attempts < 3 ? (
+            <Button variant="outline" onClick={onGenerate} disabled={busy} loading={busy}>
+              Retry
+            </Button>
+          ) : null}
+          {canRetry && attempts >= 3 ? <p className="text-sm text-muted-foreground">Retries are used up.</p> : null}
         </div>
       ) : null}
 

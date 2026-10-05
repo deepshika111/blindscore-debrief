@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeStats, metricSplit, panelVote, type StatCard } from './stats'
+import { computeStats, discussFirst, metricSplit, panelVote, type StatCard } from './stats'
 
 function card(technical: number, systemDesign: number, communication: number): StatCard {
   return { name: 'A', scores: { technical, systemDesign, communication } }
@@ -34,5 +34,11 @@ describe('computeStats', () => {
     expect(metricSplit([3, 3])).toMatchObject({ total: 2, agreedPercent: 100, disagreedPercent: 0 })
     expect(metricSplit([1, 3])).toMatchObject({ total: 2, agreed: 1, disagreed: 1, agreedPercent: 50, disagreedPercent: 50 })
     expect(metricSplit([3, 3, 1])).toMatchObject({ total: 3, agreed: 2, disagreed: 1, agreedPercent: 67, disagreedPercent: 33 })
+  })
+
+  it('puts a split of 2 or more first, widest gap at the top', () => {
+    expect(discussFirst([card(4, 2, 3), card(2, 4, 3), card(3, 3, 4)])).toEqual(['technical', 'systemDesign'])
+    expect(discussFirst([card(4, 1, 3), card(2, 4, 3)])).toEqual(['systemDesign', 'technical'])
+    expect(discussFirst([card(3, 3, 3), card(4, 3, 3)])).toEqual([])
   })
 })

@@ -30,12 +30,18 @@ import React, {
 
 type ToastType = 'success' | 'error' | 'warning' | 'info'
 
+interface ToastAction {
+  label: string
+  onClick: () => void
+}
+
 interface Toast {
   id: string
   type: ToastType
   title: string
   description?: string
   duration?: number
+  actions?: ToastAction[]
 }
 
 interface ToastContextValue {
@@ -274,6 +280,23 @@ function ToastItem({ toast, onDismiss }: ToastItemProps): React.ReactElement {
             {toast.description}
           </p>
         )}
+        {toast.actions && toast.actions.length > 0 ? (
+          <div className="mt-2 flex gap-2">
+            {toast.actions.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+                onClick={() => {
+                  action.onClick()
+                  setExiting(true)
+                }}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
       <button
         onClick={() => setExiting(true)}

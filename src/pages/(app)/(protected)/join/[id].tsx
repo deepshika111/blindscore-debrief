@@ -13,6 +13,7 @@ export default function JoinPage() {
   const [displayName, setDisplayName] = useState('')
   const [seeded, setSeeded] = useState(false)
   const [joining, setJoining] = useState(false)
+  const [waiting, setWaiting] = useState(false)
   const [closed, setClosed] = useState(false)
   const [invite, setInvite] = useState<{ name: string; role: string } | null>(null)
   const told = useRef('')
@@ -47,11 +48,41 @@ export default function JoinPage() {
     }
   }, [id, code])
 
+  useEffect(() => {
+    if (!waiting || !id || !code) return
+    let cancelled = false
+    const tick = () => {
+      void callAction<{ joined?: boolean }>('joinPanel', {
+        candidateId: id,
+        inviteCode: code,
+        displayName: displayName.trim(),
+      })
+        .then((data) => {
+          if (!cancelled && data.joined) window.location.assign(`/c/${id}`)
+        })
+        .catch(() => undefined)
+    }
+    const timer = window.setInterval(tick, 2000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [waiting, id, code, displayName])
+
   async function join() {
     setJoining(true)
     setClosed(false)
     try {
-      await callAction('joinPanel', { candidateId: id, inviteCode: code, displayName: displayName.trim() })
+      const data = await callAction<{ joined?: boolean; pending?: boolean }>('joinPanel', {
+        candidateId: id,
+        inviteCode: code,
+        displayName: displayName.trim(),
+      })
+      if (data.pending) {
+        setWaiting(true)
+        setJoining(false)
+        return
+      }
       // Collaborator-list changes are not a documented rebroadcast.
       // A full load is what puts this interviewer on the room socket.
       window.location.assign(`/c/${id}`)
@@ -86,15 +117,20 @@ export default function JoinPage() {
         id="panel-name"
         className="mt-2"
         value={displayName}
-        maxLength={120}
+        maxLength={60}
         onChange={(event) => setDisplayName(event.target.value)}
         placeholder="Your name"
       />
+      {waiting ? (
+        <p className="mt-4 text-sm" data-testid="join-waiting" role="status">
+          Waiting for the hiring manager to approve you.
+        </p>
+      ) : null}
       {closed ? (
         <p className="mt-4 text-sm text-destructive">
           This room is already revealed, and this account is not on the panel, so the name cannot be changed from here.
         </p>
-      ) : (
+      ) : waiting ? null : (
         <Button
           className="mt-4"
           data-testid="join-panel"

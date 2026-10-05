@@ -25,6 +25,20 @@ export function computeStats(cards: StatCard[]): DimStat[] {
   })
 }
 
+/** Metrics whose scores differ by 2 or more, widest split first. */
+export function discussFirst(
+  cards: Array<{ scores: Record<string, number> | { technical: number; systemDesign: number; communication: number } }>,
+): Dim[] {
+  return DIMS.map((dim) => {
+    const vals = cards.map((card) => (card.scores as Record<string, number>)[dim] ?? 0)
+    const spread = vals.length === 0 ? 0 : Math.max(...vals) - Math.min(...vals)
+    return { dim, spread }
+  })
+    .filter((row) => row.spread >= 2)
+    .sort((a, b) => b.spread - a.spread || DIMS.indexOf(a.dim) - DIMS.indexOf(b.dim))
+    .map((row) => row.dim)
+}
+
 export const DIM_LABEL: Record<Dim, string> = {
   technical: 'Technical',
   systemDesign: 'System design',

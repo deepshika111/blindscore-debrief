@@ -25,6 +25,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const [revealing, setRevealing] = useState(false)
   const [askedReveal, setAskedReveal] = useState(false)
   const [debriefBusy, setDebriefBusy] = useState(false)
+  const [memberBusy, setMemberBusy] = useState('')
   const [shell, setShell] = useState<RoomShell | null>(null)
   const [shellReady, setShellReady] = useState(false)
   const shellTicket = useRef(0)
@@ -64,8 +65,10 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const own = ownCards.find((card) => card.data.interviewerId === userId) ?? null
   const revealId = reveal?.recordId ?? ''
   const debriefState = debrief?.status ?? ''
+  const isManagerEarly = candidate?.data.hiringManagerId === userId || shell?.isManager === true
 
   useEffect(() => {
+    if (!isManagerEarly) return
     if (!revealed || debriefState === 'ready' || debriefState === 'pending' || debriefState === 'failed') return
     if (!revealId && shell?.status !== 'revealed') return
     let cancelled = false
@@ -78,7 +81,12 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
     return () => {
       cancelled = true
     }
-  }, [revealed, revealId, debriefState, candidateId, shell?.status])
+  }, [isManagerEarly, revealed, revealId, debriefState, candidateId, shell?.status])
+
+  useEffect(() => {
+    if (debriefState !== 'ready') return
+    void callAction('markDebriefViewed', { candidateId }).catch(() => undefined)
+  }, [debriefState, candidateId])
 
   const draft = readDraft(candidateId)
   const data = candidate?.data ?? shellRoom(shell) ?? draftRoom(draft, userId)
@@ -102,8 +110,9 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
   const isManager = candidate ? userId === room.hiringManagerId : (shell?.isManager ?? Boolean(draft))
   const submitted = Math.max(submissions.length, shell?.submitted ?? 0)
   const alreadySubmitted = Boolean(own) || Boolean(shell?.mine)
+  const inviteCode = shell?.inviteCode || data.inviteCode
   const invite =
-    typeof window === 'undefined' ? '' : `${window.location.origin}/join/${candidateId}?code=${data.inviteCode}`
+    typeof window === 'undefined' ? '' : `${window.location.origin}/join/${candidateId}?code=${inviteCode}`
 
   async function copyInvite() {
     try {
@@ -196,6 +205,64 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
     }
   }
 
+  async function refreshShell() {
+    const next = await callAction<RoomShell>('roomShell', { candidateId })
+    shellTicket.current += 1
+    setShell(next)
+  }
+
+  async function approve(person: { userId: string; name: string }) {
+    setMemberBusy(person.userId)
+    try {
+      await callAction('approveJoin', { candidateId, userId: person.userId })
+      await refreshShell()
+      success(`${person.name} is on the panel`)
+    } catch (error) {
+      toastError('Could not approve', explainActionError(error))
+    } finally {
+      setMemberBusy('')
+    }
+  }
+
+  async function deny(person: { userId: string }) {
+    setMemberBusy(person.userId)
+    try {
+      await callAction('denyJoin', { candidateId, userId: person.userId })
+      await refreshShell()
+    } catch (error) {
+      toastError('Could not deny', explainActionError(error))
+    } finally {
+      setMemberBusy('')
+    }
+  }
+
+  async function rotateInvite() {
+    setMemberBusy('rotate')
+    try {
+      const next = await callAction<{ inviteCode: string }>('rotateInvite', { candidateId })
+      shellTicket.current += 1
+      setShell((current) => (current ? { ...current, inviteCode: next.inviteCode } : current))
+      success('Invite link replaced', 'The old link no longer works.')
+    } catch (error) {
+      toastError('Could not replace the link', explainActionError(error))
+    } finally {
+      setMemberBusy('')
+    }
+  }
+
+  async function removeMember(person: { userId: string; name: string }) {
+    setMemberBusy(person.userId)
+    try {
+      await callAction('removeMember', { candidateId, userId: person.userId })
+      await refreshShell()
+      success(`${person.name} was removed`)
+    } catch (error) {
+      toastError('Could not remove', explainActionError(error))
+    } finally {
+      setMemberBusy('')
+    }
+  }
+
   async function generateDebrief() {
     setDebriefBusy(true)
     try {
@@ -247,11 +314,45 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
               <Button type="button" variant="outline" onClick={() => void copyInvite()}>
                 Copy
               </Button>
+              <Button type="button" variant="outline" disabled={memberBusy === 'rotate'} onClick={() => void rotateInvite()}>
+                New invite link
+              </Button>
             </div>
             <p className="break-all text-xs text-muted-foreground">{invite}</p>
           </div>
         ) : null}
       </header>
+
+      {isManager && (shell?.pending?.length ?? 0) > 0 ? (
+        <ul className="mt-6 space-y-2">
+          {shell?.pending?.map((person) => (
+            <li key={person.userId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border px-4 py-3">
+              <p className="text-sm">{person.name} wants to join</p>
+              <div className="flex gap-2">
+                <Button disabled={memberBusy === person.userId} onClick={() => void approve(person)}>
+                  Approve {person.name}
+                </Button>
+                <Button variant="outline" disabled={memberBusy === person.userId} onClick={() => void deny(person)}>
+                  Deny
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {isManager && !revealed && (shell?.roster?.length ?? 0) > 0 ? (
+        <ul className="mt-4 space-y-2">
+          {shell?.roster?.map((person) => (
+            <li key={person.userId} className="flex flex-wrap items-center justify-between gap-3 text-sm">
+              <span>{person.name}{person.submitted ? ' · submitted' : ''}</span>
+              <Button variant="outline" disabled={memberBusy === person.userId} onClick={() => void removeMember(person)}>
+                Remove {person.name}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <p className="mt-6 text-sm text-muted-foreground" data-testid="submission-progress">
         {submitted} / {data.expectedPanelSize} submitted
@@ -270,6 +371,7 @@ function CandidateRoom({ candidateId }: { candidateId: string }) {
             cards={shownCards}
             cardCount={shownCards.length}
             busy={debriefBusy}
+            canRetry={isManager}
             onGenerate={() => void generateDebrief()}
           />
         </div>
@@ -365,6 +467,9 @@ interface RoomShell {
   revealRequestNames?: string[]
   submitted: number
   mine: boolean
+  submittedNames?: string[]
+  pending?: Array<{ userId: string; name: string }>
+  roster?: Array<{ userId: string; name: string; submitted: boolean }>
   cards?: RevealCard[]
   missing?: string[]
   reason?: 'auto' | 'forced'

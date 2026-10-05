@@ -176,11 +176,11 @@ function Note({
     <label className="block space-y-1.5">
       <span className="flex items-center justify-between text-sm font-medium">
         {label}
-        <span className="font-normal text-muted-foreground">{value.length} / 2000</span>
+        <span className="font-normal text-muted-foreground">{value.length} / 1000</span>
       </span>
       <Textarea
         value={value}
-        maxLength={2000}
+        maxLength={1000}
         rows={4}
         aria-invalid={missing}
         onChange={(event) => onChange(event.target.value)}

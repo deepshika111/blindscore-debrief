@@ -506,8 +506,23 @@ async function issueInvite(
     expiresAt: new Date(now.getTime() + WEEK_MS).toISOString(),
   }))
   if (!created.success) return created
+  const remembered = await rememberContact(tools, cand.hiringManagerId, person)
+  if (!remembered.success) return remembered
   await logEvent(tools, cand, 'invite_created', cand.hiringManagerId, created.data.recordId)
   return { success: true, data: { id: created.data.recordId, label: person.label, email: person.email, token } }
+}
+
+async function rememberContact(tools: Tools, ownerId: string, person: Panelist): Promise<ActionResult<{ saved: true }>> {
+  const key = person.email || person.label.trim().toLowerCase()
+  const id = (await hashToken(`${ownerId}\n${key}`)).slice(0, 32)
+  const saved = await tools.create('contacts', asRecord({
+    ownerId,
+    label: person.label,
+    email: person.email,
+    lastUsedAt: new Date().toISOString(),
+  }), id)
+  if (!saved.success) return saved
+  return { success: true, data: { saved: true } }
 }
 
 interface StoredInvite {
@@ -779,6 +794,17 @@ export const actions: Record<string, ActionHandler<Env>> = {
     const updated = await tools.update('candidates', cand.recordId, { inviteCode })
     if (!updated.success) return updated
     return { success: true, data: { inviteCode } }
+  },
+
+  removeContact: async ({ userId, params, tools }) => {
+    const contactId = typeof params.contactId === 'string' ? params.contactId : ''
+    if (!contactId) return fail('not_found')
+    const loaded = await tools.get('contacts', contactId)
+    if (!loaded.success) return fail('not_found')
+    if (loaded.data.record.data.ownerId !== userId) return fail('not_found')
+    const removed = await tools.remove('contacts', contactId)
+    if (!removed.success) return removed
+    return { success: true, data: { removed: true } }
   },
 
   addInvite: async ({ userId, params, tools }) => {

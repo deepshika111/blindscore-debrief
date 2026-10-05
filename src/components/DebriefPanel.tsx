@@ -1,14 +1,16 @@
-import { DIM_LABEL, type Dim } from '@/lib/stats'
-import type { DebriefData } from '@/types'
+import { DIM_LABEL, DIMS, type Dim } from '@/lib/stats'
+import type { DebriefData, RevealCard } from '@/types'
 import { Button } from './ui'
 
 export function DebriefPanel({
   debrief,
+  cards,
   cardCount,
   busy,
   onGenerate,
 }: {
   debrief: DebriefData | null
+  cards: RevealCard[]
   cardCount: number
   busy: boolean
   onGenerate: () => void
@@ -47,7 +49,8 @@ export function DebriefPanel({
 
       {status === 'ready' && debrief ? (
         <div className="mt-4 space-y-5">
-          <Block title="Consensus" items={debrief.summary?.consensus ?? []} />
+          <Scores cards={cards} />
+          <Block title="Consensus" items={noteConsensus(debrief.summary?.consensus ?? [])} />
           <div>
             <h3 className="text-sm font-medium">Divergences</h3>
             <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
@@ -66,7 +69,36 @@ export function DebriefPanel({
   )
 }
 
+function Scores({ cards }: { cards: RevealCard[] }) {
+  if (cards.length === 0) return null
+  return (
+    <div>
+      <h3 className="text-sm font-medium">Scores</h3>
+      <ul className="mt-2 divide-y divide-border rounded-xl border border-border">
+        {DIMS.map((dim) => (
+          <li key={dim} className="flex items-baseline justify-between gap-4 px-4 py-3 text-sm">
+            <span>{DIM_LABEL[dim]}</span>
+            <span className="font-display text-xl font-semibold tabular-nums">{scoreText(cards, dim)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function scoreText(cards: RevealCard[], dim: Dim): string {
+  const first = cards[0]?.scores[dim]
+  if (cards.every((card) => card.scores[dim] === first)) return String(first)
+  return cards.map((card) => `${card.name} ${card.scores[dim]}`).join(', ')
+}
+
+/** The app prints the numbers. Drop model lines that only restate them. */
+function noteConsensus(items: string[]): string[] {
+  return items.filter((item) => !/rated\s+[1-4]/i.test(item))
+}
+
 function Block({ title, items }: { title: string; items: string[] }) {
+  if (items.length === 0) return null
   return (
     <div>
       <h3 className="text-sm font-medium">{title}</h3>

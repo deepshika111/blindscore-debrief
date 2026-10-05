@@ -40,6 +40,7 @@ export const candidatesSchema: CollectionSchema = {
     json('panel'),
     json('panelNames'),
     text('inviteCode', true),
+    json('revealRequests'),
     {
       name: 'forceRevealAllowed',
       storage: 'text',

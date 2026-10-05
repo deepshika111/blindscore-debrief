@@ -6,6 +6,7 @@ import type { CandidateData, SubmissionData } from '@/types'
 
 interface Notice {
   id: string
+  kind: 'submitted' | 'reveal'
   candidateId: string
   candidateName: string
   name: string
@@ -36,7 +37,7 @@ export function ManagerNotices() {
       seen.current.add(notice.id)
       toastRef.current({
         type: 'info',
-        title: `${notice.name} submitted`,
+        title: notice.kind === 'reveal' ? `${notice.name} is requesting force reveal` : `${notice.name} submitted`,
         description: notice.candidateName,
         duration: 12000,
       })
@@ -86,10 +87,23 @@ function noticesForManager(
     const name = candidate.data.panelNames?.[row.data.interviewerId]
     notices.push({
       id: row.recordId,
+      kind: 'submitted',
       candidateId: row.data.candidateId,
       candidateName: candidate.data.name,
       name: typeof name === 'string' && name.trim() ? name.trim() : 'An interviewer',
     })
+  }
+  for (const [candidateId, candidate] of managed) {
+    for (const interviewerId of candidate.data.revealRequests ?? []) {
+      const asked = candidate.data.panelNames?.[interviewerId]
+      notices.push({
+        id: `${candidateId}:reveal:${interviewerId}`,
+        kind: 'reveal',
+        candidateId,
+        candidateName: candidate.data.name,
+        name: typeof asked === 'string' && asked.trim() ? asked.trim() : 'An interviewer',
+      })
+    }
   }
   return notices
 }

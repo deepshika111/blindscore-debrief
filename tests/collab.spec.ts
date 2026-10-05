@@ -170,6 +170,8 @@ test('an outsider socket never receives a sealed scorecard phrase', async ({ use
   await interviewer.page.getByLabel('Name on the panel').fill('Interviewer')
   await interviewer.page.getByTestId('join-panel').click()
   await expect(interviewer.page.getByTestId('room-title')).toHaveText(candidateName, { timeout: 20_000 })
+  await interviewer.page.getByRole('button', { name: 'Request force reveal' }).click()
+  await expect(hm.page.getByRole('alert').filter({ hasText: 'Interviewer is requesting force reveal' })).toBeVisible({ timeout: 15_000 })
 
   for (const dimension of ['Technical', 'System design', 'Communication']) {
     await hm.page.getByRole('group', { name: dimension }).getByRole('button', { name: /Strong yes/ }).click()

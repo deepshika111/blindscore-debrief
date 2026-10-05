@@ -21,6 +21,7 @@ export interface CandidateData {
   panel: string[]
   panelNames: Record<string, string>
   inviteCode: string
+  revealRequests?: string[]
 }
 
 export interface ScorecardData {

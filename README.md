@@ -1,47 +1,98 @@
 # BlindScore
 
-[![CI](https://github.com/deepshika111/blindscore/actions/workflows/ci.yml/badge.svg)](https://github.com/deepshika111/blindscore/actions/workflows/ci.yml)
+**Live:** https://blindscore.app.space
 
-Interviewers score a candidate without seeing each other. The room opens when the panel is full, or when the hiring manager force-reveals.
+BlindScore helps an interview panel score a candidate fairly.
 
-How it is built: [Build a blind-voting app with DeepSpace in a day](docs/build-a-blind-voting-app.md).
+In a normal hiring debrief, the first person to speak sets the tone, and everyone else drifts toward their opinion. BlindScore stops that. Each interviewer scores on their own, nobody can see anyone else's score, and then all the scores appear on every screen at the same moment.
 
-## Use this template
+How it was built, step by step: [Build a blind-voting app with DeepSpace in a day](docs/build-a-blind-voting-app.md).
 
-This checkout is a working DeepSpace app. The template release is the local tag `v0.1.0`. To run it:
+## How it works
+
+1. **The hiring manager opens a room** for a candidate and says how many people are on the panel.
+2. **Each interviewer gets their own invite link.** The manager can email it (it opens your own mail app), copy it, or share it from a phone. A link works for one person only. If someone forwards it after it has been used, the next person is turned away.
+3. **Everyone scores in private.** The scorecard has three areas: Technical, System design, and Communication. Each is scored 1 to 4, with a short description for every score, plus an overall recommendation (strong no, lean no, lean yes, strong yes) and written strengths and concerns. The revealed room sums these up as an overall Yes or No.
+4. **The scores are revealed** when the last person submits. The hiring manager can also reveal early, and can let other panelists do it too.
+5. **An AI debrief** reads the notes and points out where the panel disagreed, with questions worth discussing. It does not say whether to hire. The numbers come from the app's own math, not the AI.
+6. **The hiring manager records a decision:** Hire, No hire, or Hold, with a reason. Once saved, it can't be changed.
+
+## What else is in it
+
+- **Sample room.** A ready-made, already-revealed room so you can see the result without inviting anyone.
+- **Due date and nudges.** The manager can set when scores are due and nudge someone who hasn't submitted, at most once every six hours per person.
+- **Debrief meeting.** Set a time and download a calendar file ("Add to calendar") that works with Apple Calendar or Google Calendar.
+- **Saved people.** People you invite often are remembered, so the next room fills in faster. You can remove them in Settings.
+- **Copy debrief.** Copies the revealed results and the decision as plain text, to paste into notes or a hiring tool.
+- **Activity.** The hiring manager can see who was invited, who joined, and when the room was revealed.
+- **My calibration.** After at least 3 revealed rooms, you can see whether you tend to score higher or lower than the rest of your panels. Only you can see your own numbers.
+- **Clean-up.** Rooms and scores are deleted after 90 days, and sample rooms after 7 days.
+
+## How the scores stay private
+
+This is the core of the app, so it is enforced on the server, not just hidden on screen.
+
+- **Your browser cannot write data directly.** Every change, like submitting a score or revealing a room, goes through a server action that checks who you are and what you are allowed to do.
+- **Who you are comes from your sign-in,** never from what the browser sends.
+- **Before the reveal, a score is sent only to the person who wrote it.** Not to other panelists, not to the hiring manager, not even to the app owner. The tests check this by reading the raw data the server sends to each browser.
+- **Someone who is not on the panel** just sees "Room not found."
+- **Invite links are stored as a fingerprint (a hash), not the link itself,** and expire after a week.
+- **The pages send strict browser security headers** (a Content Security Policy). They only allow scripts, styles, and fonts from this site, block the page from being embedded in other sites, and only let forms submit to this site.
+
+## What it is built with
+
+| Part | What it does |
+| --- | --- |
+| [DeepSpace](https://www.npmjs.com/package/deepspace) | Sign-in, the real-time database, permissions, server actions, AI access, and hosting |
+| Cloudflare Workers and Durable Objects | Where the server code and the data run |
+| React 19, Vite, TypeScript | The web app |
+| Tailwind CSS | Styling |
+| Claude (`claude-sonnet-5`), through DeepSpace | Writes the debrief. No API key is stored in this repo |
+| Fontsource | The Outfit and Fraunces fonts, served from this site instead of Google |
+| Zod | Checks every input on the server |
+| Vitest and Playwright | Unit tests, and browser tests that sign in as several people at once |
+
+## Where things are
+
+- `src/actions/index.ts`: every server action (create room, join, submit, reveal, debrief, decision, and so on)
+- `src/schemas/blindscore.ts`: the data collections and who may read them
+- `src/pages/`: the screens (dashboard, room, join, settings, calibration)
+- `src/lib/`: small helpers, each with its own tests (stats, invites, calendar, calibration, clean-up)
+- `worker.ts`: the server entry point, security headers, and the daily clean-up job
+- `public/_headers`: security headers for the pages
+- `tests/`: the browser tests
+
+## Run it yourself
 
 1. `npx deepspace auth login`
 2. `npm install`
-3. `npm run dev` for Chrome on http://localhost. Safari needs `npm run dev:safari`, then https://localhost:5173, because Safari drops the sign-in cookie on plain http.
-4. `npx tsc --noEmit` and `npm run test:unit`
-5. From `tests/`, `DEEPSPACE_PORT=<a free port>` `npx playwright test`. Port 5173 is the dev server. The Playwright config starts its own Vite on `DEEPSPACE_PORT`.
+3. `npm run dev`, then open http://localhost:5173 in Chrome. Safari needs `npm run dev:safari` and https://localhost:5173, because Safari drops the sign-in cookie on plain http.
 
-`generateDebrief` is the only model call. A daily cron deletes rooms past the retention window. There is no job queue and no assistant route. Invites are sent with each person's own mailto: link. Sending from the app is not built; it would need a verified sending domain.
+To check everything:
 
-## Security model
+```sh
+npx tsc --noEmit        # type check
+npm run test:unit       # unit tests
+npm test                # DeepSpace smoke and API tests
+cd tests && DEEPSPACE_PORT=5290 npx playwright test   # all browser tests
+```
 
-- Clients never write BlindScore collections. Every write is a server action in `src/actions/index.ts`.
-- The caller is `userId` from the verified session. An id in the request body is never treated as the caller.
-- Not on the panel, or no such room, returns 404. A panel member using a hiring-manager action returns 403.
-- `deleteCandidate` is hiring-manager only. A panel member can `leaveRoom` only before reveal and only if they have not submitted.
-- Each panelist gets one link. The server stores a hash of the token, not the token. A second account that opens a claimed, revoked, or expired link gets 403. The same person can open their own link again. An open link that needs approval is off unless the manager turns it on. Pending people still cannot read or submit. `removeMember` works before reveal and only if that person has not submitted.
-- Sign-in does not give the action a verified email, so invites are not locked to an address.
-- Before reveal, `roomShell` returns names, who submitted, flags, and the caller's own card. Other scores and notes are not included. After reveal, the snapshot is returned only to panel members.
-- A scorecard submitted after a reveals row exists gets 409 and is not stored. If a reveal lands after the card write, the action deletes that card and its submission so a stored card cannot sit outside the snapshot.
-- `records.create` updates an existing id. The reveal row carries an immutable seal, so a second writer reads the first snapshot and does not replace it. Setting the candidate status is a second write. If that write is missed, `roomShell` sets status to `revealed` before it returns.
-- Rooms and scores are deleted automatically after 90 days. A sample room is deleted after 7 days. Saved people are kept.
-- Calibration is your own average against the rest of each panel. The hiring manager and the app owner do not see anyone else's numbers.
+The Playwright tests start their own server, so pick a free port that isn't 5173. They run one at a time because they share the same test accounts.
+
+To deploy: commit your changes, then run `npx deepspace deploy`.
+
+This repo is also usable as a starting point for your own app. The release is the local tag `v0.1.0`.
 
 ## Limits
 
-- Names 60 characters, roles 80, strengths and concerns 1,000.
-- New join requests: 10 per minute per person, counted in the record Durable Object.
-- New rooms: 20 per hour per person.
-- Debrief generation: 5 attempts for the life of a room, and at most 3 of those per hour. Only the hiring manager can press Retry. A finished debrief does not call the model again.
-- One sample room per user. It does not call the model.
+- Names up to 60 characters, roles 80, strengths and concerns 1,000.
+- Up to 20 new rooms per hour per person, and 10 join attempts per minute.
+- The AI debrief can be tried 5 times per room, at most 3 times an hour. Only the hiring manager can retry it. A finished debrief is never regenerated.
+- One sample room per person. It doesn't use the AI.
 
-## Still open
+## Known gaps
 
-- The two reveal writes are not one database transaction. A crash between them is repaired on the next `roomShell`.
-- Rate limits are per isolate of one Durable Object. A burst that arrives as two requests can still interleave only at the action boundary; the counter itself is one request.
-- Invites are sent with each person's own mailto: link. Sending from the app is not built; it would need a verified sending domain. The calendar file, when a debrief time is set, uses the room URL.
+- **Invites go out through your own mail app.** Each invite uses its own mailto: link. Sending from the app is not built; it would need a verified sending domain.
+- **Invite links are not tied to an email address,** because sign-in doesn't give the app a verified email. Whoever holds a person's unused link can claim that seat.
+- **A reveal is two separate saves:** the scores, then the room's status. If something fails between them, the room repairs itself the next time it is opened.
+- **No profile pictures.** The menu shows your initial instead, because the security policy only allows images from this site.

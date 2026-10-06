@@ -51,7 +51,7 @@ The first invite was one shared link. The hiring manager approved or denied each
 
 Invites are sent with each person's own mailto: link. Sending from the app is not built; it would need a verified sending domain.
 
-The Activation page still counts invite opened, claimed, joined, first scorecard, reveal, and debrief viewed. This experiment has not been run. There are no conversion numbers yet.
+The Activation page still counts invite opened, claimed, joined, first scorecard, reveal, and debrief viewed.
 
 The write-up of the build is [Build a blind-voting app with DeepSpace in a day](docs/build-a-blind-voting-app.md).
 

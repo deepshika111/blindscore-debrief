@@ -8,5 +8,6 @@ describe('static asset headers', () => {
     for (const [name, value] of Object.entries(expected)) {
       expect(assetHeaders).toContain(`${name}: ${value}`)
     }
+    expect(expected['Content-Security-Policy']).toContain("form-action 'self'")
   })
 })

@@ -21,6 +21,7 @@ test.describe('API tests', () => {
       expect(csp, path).toContain("font-src 'self'")
       expect(csp, path).toContain("object-src 'none'")
       expect(csp, path).toContain("base-uri 'self'")
+      expect(csp, path).toContain("form-action 'self'")
       expect(csp, path).not.toContain('fonts.googleapis.com')
       expect(csp, path).not.toContain('fonts.gstatic.com')
     }
